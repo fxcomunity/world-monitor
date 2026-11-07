@@ -248,19 +248,20 @@ psql -U your_user -d your_database -f database/schema.sql
 ```
 
 ### 4. Run Development Servers
-Turnstile API berjalan di Cloudflare Worker. Jalankan Worker lokal dan Vite di dua terminal:
+Turnstile API berjalan di Cloudflare Worker. Jalankan Wrangler dari root repository dan Vite dari folder `frontend` di dua terminal.
 
 Terminal pertama:
 ```bash
-npm run worker:dev
+npx wrangler dev --config frontend/wrangler.toml --inspector-port 0
 ```
 
 Terminal kedua:
 ```bash
+cd frontend
 npm run dev
 ```
 
-Buka `http://localhost:5173` di browser. Vite mem-proxy `/api/*` ke Worker lokal di `http://localhost:8787`. Tambahkan secret Turnstile lokal ke `.dev.vars` seperti dijelaskan di bawah.
+Buka `http://localhost:5173` di browser. Vite mem-proxy `/api/*` ke Worker lokal di `http://localhost:8787`. Perintah Wrangler dari root menggunakan Wrangler v4; Wrangler v3 yang terpasang di `frontend` dapat gagal menjalankan `workerd` di beberapa lingkungan Windows.
 
 ### 5. Build for Production
 ```bash
