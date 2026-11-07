@@ -1019,14 +1019,28 @@ export default {
             }
 
             if (articles.length === 0) {
-              const rssUrl = 'https://news.google.com/rss/search?q=technology+OR+science+OR+space+OR+semiconductor+when%3A1d&hl=en-US&gl=US&ceid=US:en';
-              const rssResponse = await fetch(rssUrl, {
-                headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
-                signal: AbortSignal.timeout(10000),
-              });
-              if (!rssResponse.ok) throw new Error(`Google News RSS HTTP ${rssResponse.status}`);
-
-              const xml = await rssResponse.text();
+              const rssFeeds = [
+                {
+                  name: 'ScienceDaily',
+                  url: 'https://www.sciencedaily.com/rss/all.xml',
+                },
+                {
+                  name: 'Phys.org',
+                  url: 'https://phys.org/rss-feed/',
+                },
+                {
+                  name: 'Science News',
+                  url: 'https://www.sciencenews.org/feed',
+                },
+                {
+                  name: 'BBC Science',
+                  url: 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',
+                },
+                {
+                  name: 'Google News',
+                  url: 'https://news.google.com/rss/search?q=technology+OR+science+OR+space+OR+semiconductor+when%3A1d&hl=en-US&gl=US&ceid=US:en',
+                },
+              ];
               const decodeXml = (value: string) => value
                 .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
                 .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
@@ -1043,18 +1057,42 @@ export default {
                 return match ? decodeXml(match[1].trim()) : '';
               };
 
-              articles = normalizeArticles(Array.from(xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi), match => {
-                const item = match[1];
-                return {
-                  url: getTag(item, 'link'),
-                  title: getTag(item, 'title'),
-                  publishedAt: getTag(item, 'pubDate'),
-                  source: getTag(item, 'source'),
-                };
+              const rssResults = await Promise.allSettled(rssFeeds.map(async feed => {
+                const rssResponse = await fetch(feed.url, {
+                  headers: {
+                    Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml',
+                    'User-Agent': 'Mozilla/5.0 (compatible; WorldMonitor/1.0)',
+                  },
+                  signal: AbortSignal.timeout(8000),
+                });
+                if (!rssResponse.ok) throw new Error(`${feed.name} RSS HTTP ${rssResponse.status}`);
+
+                const xml = await rssResponse.text();
+                return normalizeArticles(Array.from(
+                  xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi),
+                  match => {
+                    const item = match[1];
+                    return {
+                      url: getTag(item, 'link'),
+                      title: getTag(item, 'title'),
+                      publishedAt: getTag(item, 'pubDate'),
+                      source: getTag(item, 'source') || feed.name,
+                    };
+                  },
+                ));
               }));
+
+              for (const result of rssResults) {
+                if (result.status === 'fulfilled') articles.push(...result.value);
+                else console.warn('Technology news RSS source unavailable:', result.reason);
+              }
+              articles = [...new Map(articles.map(article => [article.url, article])).values()]
+                .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+                .slice(0, 50);
             }
 
             if (articles.length === 0 && gdeltError) throw gdeltError;
+            if (articles.length === 0) throw new Error('All technology and science news feeds returned no matching articles.');
 
             const response = jsonResponse(articles, 200, {
               'Cache-Control': 'public, max-age=300',
