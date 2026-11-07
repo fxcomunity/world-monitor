@@ -1032,7 +1032,7 @@ export default {
     newHeaders.set('X-XSS-Protection', '1; mode=block');
     newHeaders.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     newHeaders.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
-    newHeaders.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://embed.windy.com https://www.youtube.com; media-src 'self' https:;");
+    newHeaders.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self' https: https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com https://www.youtube-nocookie.com https://embed.windy.com https://www.youtube.com; media-src 'self' https:;");
 
     if (url.pathname.startsWith('/assets/')) {
       newHeaders.set('Cache-Control', 'public, max-age=31536000, immutable');
