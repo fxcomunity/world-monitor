@@ -40,6 +40,7 @@
 | ⚡ **Energy Monitor** | Data energi EIA, intensitas karbon Electricity Maps |
 | 🛰️ **Transport Radar** | Pelacakan penerbangan OpenSky ADS-B, data kapal AISStream |
 | 🤖 **AI Multi-Provider** | Auto-failover: Groq > Gemini > DeepSeek > OpenAI > Mistral > OpenRouter |
+| 💬 **Website AI Chat** | Bantuan penggunaan World Monitor melalui Worker, sesi Turnstile, batas pesan, dan throttling |
 | 🏴 **Country Intelligence** | Profil 19+ negara dengan flag emoji, skor stabilitas, dan analisis regional |
 | 📡 **Live Weather Radar** | Radar cuaca interaktif Windy dengan data Doppler global |
 | 🎥 **YouTube Live Streams** | Siaran bencana 24/7 via YouTube Data API v3 dengan filter topik |

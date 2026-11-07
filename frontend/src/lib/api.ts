@@ -350,6 +350,28 @@ export async function runAIAnalysis(prompt: string, preferredProvider?: string):
   };
 }
 
+export interface WebsiteChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function sendWebsiteChatMessage(messages: WebsiteChatMessage[]): Promise<string> {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: messages.slice(-8) }),
+  });
+  const data = await response.json().catch(() => null) as {
+    success?: boolean;
+    text?: string;
+    error?: string;
+  } | null;
+  if (!response.ok || !data?.success || typeof data.text !== 'string') {
+    throw new Error(data?.error || `Chat AI gagal merespons (HTTP ${response.status}).`);
+  }
+  return data.text;
+}
+
 export async function fetchAvailableAIProviders(): Promise<{ id: string; name: string }[]> {
   try {
     const res = await fetch('/api/ai/providers');

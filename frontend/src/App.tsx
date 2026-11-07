@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import AdminProfileButton from './components/AdminProfileButton';
 import RatingFeedbackModal, { FeedbackHeaderWidget } from './components/RatingFeedbackModal';
+import WebsiteChatWidget from './components/WebsiteChatWidget';
 import Footer from './components/Footer';
 import { isAdminAuthenticated } from './lib/auth';
 import { Menu } from 'lucide-react';
@@ -136,6 +137,8 @@ export default function App() {
           isOpen={ratingModalOpen}
           onClose={() => setRatingModalOpen(false)}
         />
+
+        {location.pathname !== '/maintenance' && <WebsiteChatWidget />}
       </div>
     </div>
   );
