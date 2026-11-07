@@ -940,7 +940,7 @@ export default {
         // [GET] /api/technology/news — Berita sains & teknologi terbaru dari GDELT / Google News RSS
         if (url.pathname === '/api/technology/news' && request.method === 'GET') {
           const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
-          const cacheKey = new Request(new URL('/api/technology/news', url.origin).toString());
+          const cacheKey = new Request(new URL('/api/technology/news?v=2', url.origin).toString());
           const cachedResponse = await cache.match(cacheKey);
           if (cachedResponse) return cachedResponse;
 
@@ -982,6 +982,59 @@ export default {
             }];
           });
 
+          const rssFeeds = [
+            { name: 'ScienceDaily', url: 'https://www.sciencedaily.com/rss/all.xml' },
+            { name: 'Phys.org', url: 'https://phys.org/rss-feed/' },
+            { name: 'Science News', url: 'https://www.sciencenews.org/feed' },
+            { name: 'BBC Science', url: 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml' },
+            { name: 'NASA', url: 'https://www.nasa.gov/news-release/feed/' },
+            { name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml' },
+            { name: 'Space.com', url: 'https://www.space.com/feeds/all' },
+            {
+              name: 'Google News',
+              url: 'https://news.google.com/rss/search?q=technology+OR+science+OR+space+OR+semiconductor+when%3A1d&hl=en-US&gl=US&ceid=US:en',
+            },
+          ];
+          const decodeXml = (value: string) => value
+            .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+            .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
+            .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+            .replace(/&(amp|lt|gt|quot|apos);/g, (_, entity: string) => ({
+              amp: '&',
+              lt: '<',
+              gt: '>',
+              quot: '"',
+              apos: "'",
+            }[entity] || `&${entity};`));
+          const getTag = (item: string, tag: string) => {
+            const match = item.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+            return match ? decodeXml(match[1].trim()) : '';
+          };
+          const rssResultsPromise = Promise.allSettled(rssFeeds.map(async feed => {
+            const rssResponse = await fetch(feed.url, {
+              headers: {
+                Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml',
+                'User-Agent': 'Mozilla/5.0 (compatible; WorldMonitor/1.0)',
+              },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (!rssResponse.ok) throw new Error(`${feed.name} RSS HTTP ${rssResponse.status}`);
+
+            const xml = await rssResponse.text();
+            return normalizeArticles(Array.from(
+              xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi),
+              match => {
+                const item = match[1];
+                return {
+                  url: getTag(item, 'link'),
+                  title: getTag(item, 'title'),
+                  publishedAt: getTag(item, 'pubDate'),
+                  source: getTag(item, 'source') || feed.name,
+                };
+              },
+            ));
+          }));
+
           try {
             let articles: ReturnType<typeof normalizeArticles> = [];
             let gdeltError: unknown;
@@ -1018,84 +1071,20 @@ export default {
               console.warn('GDELT technology news unavailable; trying Google News RSS:', err);
             }
 
-            if (articles.length === 0) {
-              const rssFeeds = [
-                {
-                  name: 'ScienceDaily',
-                  url: 'https://www.sciencedaily.com/rss/all.xml',
-                },
-                {
-                  name: 'Phys.org',
-                  url: 'https://phys.org/rss-feed/',
-                },
-                {
-                  name: 'Science News',
-                  url: 'https://www.sciencenews.org/feed',
-                },
-                {
-                  name: 'BBC Science',
-                  url: 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',
-                },
-                {
-                  name: 'Google News',
-                  url: 'https://news.google.com/rss/search?q=technology+OR+science+OR+space+OR+semiconductor+when%3A1d&hl=en-US&gl=US&ceid=US:en',
-                },
-              ];
-              const decodeXml = (value: string) => value
-                .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-                .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
-                .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-                .replace(/&(amp|lt|gt|quot|apos);/g, (_, entity: string) => ({
-                  amp: '&',
-                  lt: '<',
-                  gt: '>',
-                  quot: '"',
-                  apos: "'",
-                }[entity] || `&${entity};`));
-              const getTag = (item: string, tag: string) => {
-                const match = item.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
-                return match ? decodeXml(match[1].trim()) : '';
-              };
-
-              const rssResults = await Promise.allSettled(rssFeeds.map(async feed => {
-                const rssResponse = await fetch(feed.url, {
-                  headers: {
-                    Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml',
-                    'User-Agent': 'Mozilla/5.0 (compatible; WorldMonitor/1.0)',
-                  },
-                  signal: AbortSignal.timeout(8000),
-                });
-                if (!rssResponse.ok) throw new Error(`${feed.name} RSS HTTP ${rssResponse.status}`);
-
-                const xml = await rssResponse.text();
-                return normalizeArticles(Array.from(
-                  xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi),
-                  match => {
-                    const item = match[1];
-                    return {
-                      url: getTag(item, 'link'),
-                      title: getTag(item, 'title'),
-                      publishedAt: getTag(item, 'pubDate'),
-                      source: getTag(item, 'source') || feed.name,
-                    };
-                  },
-                ));
-              }));
-
-              for (const result of rssResults) {
-                if (result.status === 'fulfilled') articles.push(...result.value);
-                else console.warn('Technology news RSS source unavailable:', result.reason);
-              }
-              articles = [...new Map(articles.map(article => [article.url, article])).values()]
-                .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-                .slice(0, 50);
+            const rssResults = await rssResultsPromise;
+            for (const result of rssResults) {
+              if (result.status === 'fulfilled') articles.push(...result.value);
+              else console.warn('Technology news RSS source unavailable:', result.reason);
             }
+            articles = [...new Map(articles.map(article => [article.url, article])).values()]
+              .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+              .slice(0, 50);
 
             if (articles.length === 0 && gdeltError) throw gdeltError;
             if (articles.length === 0) throw new Error('All technology and science news feeds returned no matching articles.');
 
             const response = jsonResponse(articles, 200, {
-              'Cache-Control': 'public, max-age=300',
+              'Cache-Control': 'public, max-age=30',
             });
             await cache.put(cacheKey, response.clone());
             return response;

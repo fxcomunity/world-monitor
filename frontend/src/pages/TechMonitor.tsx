@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Cpu, ExternalLink, Radio, RefreshCw } from 'lucide-react';
 import { fetchTechnologyNews, TechnologyNewsItem } from '../lib/api';
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const REFRESH_INTERVAL_MS = 60 * 1000;
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('id-ID', {
@@ -54,7 +54,7 @@ export default function TechMonitor() {
             Technology & Science Monitor
           </h1>
           <p className="text-xs text-gray-400 mt-1">
-            Berita sains dan teknologi terkini dari media global, diperbarui otomatis setiap 5 menit.
+            Berita terbaru dari media global, diperbarui otomatis setiap menit. Waktu publikasi tetap mengikuti masing-masing sumber.
           </p>
         </div>
 
@@ -79,7 +79,7 @@ export default function TechMonitor() {
             Feed Berita Terbaru
           </h2>
           <span className="text-[10px] font-mono text-cyan-400">
-            {articles.length} ARTIKEL · GDELT
+            {articles.length} ARTIKEL · LIVE
           </span>
         </div>
 
