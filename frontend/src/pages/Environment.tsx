@@ -30,31 +30,6 @@ const CITIES_SAMPLE = [
   { name: 'Paris',       lat: 48.8566,  lng: 2.3522,   country: 'France'    },
 ];
 
-// Heatmap data point: titik-titik polusi di seluruh dunia
-const HEATMAP_POINTS = [
-  // Asia Timur
-  [116.4, 39.9, 1.0], [121.4, 31.2, 0.95], [113.2, 23.1, 0.9], [126.9, 37.5, 0.85],
-  [120.1, 30.2, 0.88], [106.5, 29.5, 0.82], [104.0, 30.6, 0.80], [117.2, 34.2, 0.85],
-  // Asia Selatan
-  [77.2, 28.6, 1.0], [88.3, 22.5, 0.92], [72.8, 19.0, 0.88], [80.2, 13.0, 0.75],
-  [72.9, 21.1, 0.82], [85.1, 25.5, 0.90], [76.9, 8.5, 0.70],
-  // Asia Tenggara
-  [106.8, -6.2, 0.80], [100.5, 13.7, 0.72], [103.8, 1.3, 0.60], [108.2, 16.0, 0.68],
-  [96.1, 16.8, 0.65], [114.9, 4.9, 0.58], [107.6, -6.9, 0.70],
-  // Timur Tengah
-  [46.7, 24.7, 0.75], [51.4, 35.7, 0.85], [44.4, 33.3, 0.78], [55.3, 25.3, 0.72],
-  // Eropa
-  [2.3, 48.8, 0.40], [13.4, 52.5, 0.45], [-0.1, 51.5, 0.38], [14.4, 50.1, 0.50],
-  [19.1, 50.3, 0.65], [21.0, 52.2, 0.55],
-  // Amerika Utara
-  [-118.2, 34.0, 0.60], [-74.0, 40.7, 0.45], [-87.6, 41.8, 0.50], [-95.4, 29.8, 0.55],
-  [-122.4, 37.8, 0.40],
-  // Afrika
-  [31.2, 30.0, 0.88], [3.4, 6.5, 0.75], [36.8, -1.3, 0.55], [28.0, -26.2, 0.60],
-  // Amerika Selatan
-  [-46.6, -23.5, 0.62], [-70.6, -33.4, 0.70], [-58.4, -34.6, 0.48], [-77.0, -12.0, 0.65],
-];
-
 interface CityData {
   name: string;
   lat: number;
@@ -75,52 +50,49 @@ export default function Environment() {
   const [loading, setLoading]         = useState(true);
   const [mapReady, setMapReady]       = useState(false);
   const [lastUpdate, setLastUpdate]   = useState('');
+  const [loadError, setLoadError]     = useState<string | null>(null);
 
-  // ── Siapkan data kota secara Real-Time dari Open-Meteo Air Quality API ────────
+  // ── Siapkan data kota terkini dari Open-Meteo Air Quality API ────────────────
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const results = await Promise.allSettled(
-        CITIES_SAMPLE.map(async (c) => {
-          const live = await fetchAirQualityLive(c.lat, c.lng);
-          return {
-            ...c,
-            aqi: Math.round(live.us_aqi || (live.pm2_5 * 2)),
-            pm25: +(live.pm2_5 || 0).toFixed(1),
-            pm10: +(live.pm10 || 0).toFixed(1),
-            o3: +(live.ozone || 0).toFixed(1),
-          };
-        })
-      );
-
-      const data: CityData[] = results
-        .filter((r): r is PromiseFulfilledResult<CityData> => r.status === 'fulfilled')
-        .map(r => r.value);
+      const readings = await fetchAirQualityLive(CITIES_SAMPLE);
+      const data = CITIES_SAMPLE.flatMap((city, index): CityData[] => {
+        const reading = readings[index];
+        if (!reading || typeof reading.us_aqi !== 'number' || !Number.isFinite(reading.us_aqi)) {
+          return [];
+        }
+        return [{
+          ...city,
+          aqi: Math.round(reading.us_aqi),
+          pm25: Number((reading.pm2_5 ?? 0).toFixed(1)),
+          pm10: Number((reading.pm10 ?? 0).toFixed(1)),
+          o3: Number((reading.ozone ?? 0).toFixed(1)),
+        }];
+      });
 
       data.sort((a, b) => b.aqi - a.aqi);
       setCities(data);
-      if (data.length > 0) setSelectedCity(data[0]);
-      setLastUpdate(new Date().toLocaleTimeString('id-ID'));
-
-      // Perbarui marker peta jika map sudah terinisialisasi
-      if (mapRef.current && mapRef.current.getSource('city-points')) {
-        mapRef.current.getSource('city-points').setData({
-          type: 'FeatureCollection',
-          features: data.map(c => ({
-            type: 'Feature',
-            properties: { name: c.name, country: c.country, aqi: c.aqi, pm25: c.pm25 },
-            geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
-          })),
-        });
+      setSelectedCity(current => data.find(city => city.name === current?.name) || data[0] || null);
+      if (data.length === 0) {
+        setLoadError('Belum ada pembacaan kualitas udara yang valid dari Open-Meteo.');
+      } else {
+        setLastUpdate(new Date().toLocaleTimeString('id-ID'));
       }
     } catch (err) {
       console.error('Error fetching real-time air quality:', err);
+      setLoadError(err instanceof Error ? err.message : 'Gagal memuat data kualitas udara.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   // ── Init MapLibre dengan heatmap ───────────────────────────────────────────
   useEffect(() => {
@@ -142,53 +114,12 @@ export default function Environment() {
         if (!mounted) return;
         mapRef.current = map;
 
-        // ── Tambah sumber data GeoJSON untuk heatmap ──────────────────────
-        map.addSource('air-quality-heat', {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: HEATMAP_POINTS.map(([lng, lat, intensity]) => ({
-              type: 'Feature',
-              properties: { intensity },
-              geometry: { type: 'Point', coordinates: [lng, lat] },
-            })),
-          },
-        });
-
-        // ── Layer heatmap ─────────────────────────────────────────────────
-        map.addLayer({
-          id: 'air-quality-heatmap',
-          type: 'heatmap',
-          source: 'air-quality-heat',
-          maxzoom: 12,
-          paint: {
-            'heatmap-weight': ['interpolate', ['linear'], ['get', 'intensity'], 0, 0, 1, 1],
-            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
-            'heatmap-color': [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0,    'rgba(0,0,0,0)',
-              0.1,  'rgba(0,200,50,0.6)',
-              0.3,  'rgba(100,200,0,0.7)',
-              0.5,  'rgba(255,200,0,0.8)',
-              0.7,  'rgba(255,100,0,0.85)',
-              0.9,  'rgba(255,30,0,0.9)',
-              1.0,  'rgba(200,0,0,1)',
-            ],
-            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 20, 5, 40, 10, 60],
-            'heatmap-opacity': 0.85,
-          },
-        });
-
-        // ── Tambah titik kota sebagai circle di atas heatmap ──────────────
+        // ── Tambah titik kota dari data aktual setelah peta siap ──────────
         map.addSource('city-points', {
           type: 'geojson',
           data: {
             type: 'FeatureCollection',
-            features: CITIES_SAMPLE.map(c => ({
-              type: 'Feature',
-              properties: { name: c.name, country: c.country, aqi: 100, pm25: 35 },
-              geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
-            })),
+            features: [],
           },
         });
 
@@ -281,6 +212,19 @@ export default function Environment() {
     };
   }, []);
 
+  useEffect(() => {
+    const source = mapRef.current?.getSource('city-points');
+    if (!mapReady || !source) return;
+    source.setData({
+      type: 'FeatureCollection',
+      features: cities.map(city => ({
+        type: 'Feature',
+        properties: { name: city.name, country: city.country, aqi: city.aqi, pm25: city.pm25 },
+        geometry: { type: 'Point', coordinates: [city.lng, city.lat] },
+      })),
+    });
+  }, [cities, mapReady]);
+
   // ── Fly to kota saat diklik di panel ──────────────────────────────────────
   const flyToCity = (city: CityData) => {
     setSelectedCity(city);
@@ -299,11 +243,11 @@ export default function Environment() {
             <h1 className="text-xs sm:text-sm font-bold tracking-wider text-white uppercase flex flex-wrap items-center gap-2">
               <span>MONITOR KUALITAS UDARA GLOBAL</span>
               <span className="text-[10px] text-emerald-400 border border-emerald-800/80 px-1.5 py-0.5 rounded bg-emerald-950/60 font-bold">
-                100% REAL-TIME LIVE DATA
+                DATA TERKINI
               </span>
             </h1>
             <div className="text-[11px] text-gray-500">
-              Sensor Lapangan Real-Time Open-Meteo Air Quality & Polusi Dunia
+              Estimasi kualitas udara Open-Meteo untuk kota-kota sampel · pembaruan berkala
             </div>
           </div>
         </div>
@@ -333,7 +277,7 @@ export default function Environment() {
           {!mapReady && (
             <div className="absolute inset-0 bg-[#050B18] flex flex-col items-center justify-center z-10"
               style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, rgba(0,200,50,0.04) 0%, transparent 60%)' }}>
-              <div className="text-green-400 text-sm font-bold animate-pulse mb-2">MEMUAT HEATMAP KUALITAS UDARA...</div>
+              <div className="text-green-400 text-sm font-bold animate-pulse mb-2">MEMUAT PETA KUALITAS UDARA...</div>
               <div className="text-gray-600 text-xs">MapLibre GL · MapTiler Dark · Open-Meteo Live Data</div>
             </div>
           )}
@@ -435,6 +379,14 @@ export default function Environment() {
             </div>
 
             <div className="space-y-2">
+              {loadError && (
+                <div className="rounded border border-amber-900/60 bg-amber-950/30 p-2 text-[10px] text-amber-300">
+                  {loadError}
+                </div>
+              )}
+              {cities.length === 0 && !loading && !loadError && (
+                <div className="text-xs text-gray-500">Belum ada data kualitas udara.</div>
+              )}
               {cities.map((city, idx) => {
                 const lvl = aqiLevel(city.aqi);
                 const isSelected = selectedCity?.name === city.name;

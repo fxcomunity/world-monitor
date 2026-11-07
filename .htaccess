@@ -20,6 +20,10 @@ ErrorDocument 505 /505.html
   RewriteEngine On
   RewriteBase /
 
+  # Proxy API lokal Laragon ke Cloudflare Worker dev, hanya untuk host development.
+  RewriteCond %{HTTP_HOST} ^(localhost|127\.0\.0\.1|EXPLOREID\.test)(:[0-9]+)?$ [NC]
+  RewriteRule ^api/(.*)$ api-proxy.php?__path=$1 [QSA,L]
+
   # Jangan rewrite untuk file error statis
   RewriteRule ^(404|500|502|503|505)\.html$ - [L]
 

@@ -247,21 +247,23 @@ VITE_EIA_KEY=your_eia_key
 psql -U your_user -d your_database -f database/schema.sql
 ```
 
-### 4. Run Development Servers
-Turnstile API berjalan di Cloudflare Worker. Jalankan Wrangler dari root repository dan Vite dari folder `frontend` di dua terminal.
+### 4. Run Local Development Servers
+Untuk Laragon/Apache, akses situs melalui `http://EXPLOREID.test`. File `.htaccess` lokal meneruskan `/api/*` ke Worker pada port `8787`.
 
 Terminal pertama:
 ```bash
 npx wrangler dev --config frontend/wrangler.toml --inspector-port 0
 ```
 
-Terminal kedua:
+Wrangler membaca `frontend/.dev.vars`. Ganti placeholder `TURNSTILE_SECRET_KEY` dengan secret Turnstile asli. Tambahkan `EXPLOREID.test` dan `localhost` ke hostname yang diizinkan widget Turnstile untuk verifikasi lokal.
+
+Jika menggunakan Vite (opsional), jalankan dari terminal kedua:
 ```bash
 cd frontend
 npm run dev
 ```
 
-Buka `http://localhost:5173` di browser. Vite mem-proxy `/api/*` ke Worker lokal di `http://localhost:8787`. Perintah Wrangler dari root menggunakan Wrangler v4; Wrangler v3 yang terpasang di `frontend` dapat gagal menjalankan `workerd` di beberapa lingkungan Windows.
+Buka `http://localhost:5173` di browser. Vite juga mem-proxy `/api/*` ke Worker lokal. Perintah Wrangler dari root menggunakan Wrangler v4; Wrangler v3 yang terpasang di `frontend` dapat gagal menjalankan `workerd` di beberapa lingkungan Windows.
 
 ### 5. Build for Production
 ```bash
@@ -278,12 +280,12 @@ Create a Turnstile widget in the Cloudflare dashboard and add its keys to the Wo
 
 - Set `TURNSTILE_SITE_KEY` to the public site key in the Worker's environment variables.
 - Add `TURNSTILE_SECRET_KEY` as a Worker secret. From the `frontend` directory, run `npx wrangler secret put TURNSTILE_SECRET_KEY` and paste the secret key when prompted.
-- In Cloudflare, configure the site key under the Worker's **Settings → Variables and Secrets**. `TURNSTILE_SITE_KEY` sudah ada di `frontend/wrangler.toml`. Untuk Worker lokal, tambahkan secret ke file `frontend/.dev.vars` yang diabaikan Git:
+- In Cloudflare, configure the site key under the Worker's **Settings → Variables and Secrets**. `TURNSTILE_SITE_KEY` sudah ada di `frontend/wrangler.toml`. Untuk Worker lokal, atur secret pada `frontend/.dev.vars` yang diabaikan Git:
   ```env
   TURNSTILE_SECRET_KEY=your_secret_key
   ```
-  Salin nilai Secret Key Turnstile dari dashboard Cloudflare ke file tersebut. `wrangler secret put` menyimpan secret untuk Worker remote dan tidak mengisi `.dev.vars` lokal. Tambahkan `localhost` ke daftar hostname yang diizinkan widget Turnstile untuk pengujian lokal.
-- Include the hostname serving the site in the Turnstile widget's allowed hostnames.
+  Salin nilai Secret Key Turnstile dari dashboard Cloudflare ke file tersebut. `wrangler secret put` menyimpan secret untuk Worker remote dan tidak mengisi `.dev.vars` lokal.
+- Include the production hostname and any local development hostnames in the Turnstile widget's allowed hostnames.
 
 The site displays the widget before rendering the app. The Worker validates its token with Cloudflare, then issues a signed, HTTP-only session cookie that allows API requests for 12 hours. The secret key must never be added to a `VITE_` variable or shipped to the browser.
 

@@ -4,9 +4,10 @@ import Globe from 'globe.gl';
 import {
   RefreshCw, Navigation, Layers, RotateCcw,
   ZoomIn, ZoomOut, Eye, EyeOff, Radio, Globe as GlobeIcon, X, Sun, Moon,
-  Menu, Maximize2, Minimize2, Sparkles, Orbit, Compass, SlidersHorizontal
+  Menu, Maximize2, Minimize2, Sparkles, Orbit, Compass, Activity, CloudRain, MapPin
 } from 'lucide-react';
 import { fetchDisasters, fetchEarthquakes } from '../lib/api';
+import './Map.css';
 
 // ─── Kategori & Styling Teknis ─────────────────────────────────────────────
 interface CategoryMeta {
@@ -44,7 +45,7 @@ const CATEGORY_MAP: Record<string, CategoryMeta> = {
   Earthquakes: {
     color: '#ffb300',
     badge: 'SEISMIC',
-    label: 'Earthquake M5+',
+    label: 'Gempa bumi',
     layerGroup: 'disaster',
   },
   Landslides: {
@@ -213,7 +214,12 @@ export default function GoogleEarthGlobeMap() {
   const [selectedCountry, setSelectedCountry] = useState<CountryFeature['properties'] | null>(null);
   const [hoveredCountry, setHoveredCountry] = useState<CountryFeature | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [isRotating, setIsRotating] = useState<boolean>(true);
+  const [dataError, setDataError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const resizeGlobeRef = useRef<(() => void) | null>(null);
+  const streamModeRef = useRef<'collapsed' | 'normal' | 'expanded'>('normal');
+  const reducedMotion = useRef(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [isRotating, setIsRotating] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   
   // Hamburger / Drawer mode untuk Stream Incidents: 'collapsed' | 'normal' | 'expanded'
   const [streamMode, setStreamMode] = useState<'collapsed' | 'normal' | 'expanded'>('normal');
@@ -225,7 +231,7 @@ export default function GoogleEarthGlobeMap() {
   const [sunAngle, setSunAngle] = useState<number>(45);
 
   // Tata Surya (Solar System) Mode
-  const [solarSystemActive, setSolarSystemActive] = useState<boolean>(true);
+  const [solarSystemActive, setSolarSystemActive] = useState<boolean>(false);
   const [selectedPlanet, setSelectedPlanet] = useState<string | null>(null);
 
   // ─── 1. Load GeoJSON Batas Negara HD ──────────────────────────────────────
@@ -282,19 +288,28 @@ export default function GoogleEarthGlobeMap() {
         });
       }
 
-      setEvents(items);
-      if (items.length > 0 && !selectedEvent) {
-        setSelectedEvent(items[0]);
+      const failedSources = [
+        disRes.status === 'rejected' ? 'NASA EONET' : '',
+        quakeRes.status === 'rejected' ? 'USGS' : '',
+      ].filter(Boolean);
+      setDataError(failedSources.length ? `Data ${failedSources.join(' & ')} belum tersedia. Coba muat ulang.` : '');
+      if (failedSources.length < 2) {
+        setEvents(items);
+        setLastUpdated(new Date());
+        setSelectedEvent(current => current ? items.find(item => item.id === current.id) || null : null);
       }
     } catch (err) {
       console.error('Error fetching live data:', err);
+      setDataError('Data belum dapat dimuat. Periksa koneksi dan coba lagi.');
     } finally {
       setLoading(false);
     }
-  }, [selectedEvent]);
+  }, []);
 
   useEffect(() => {
     loadData();
+    const interval = window.setInterval(loadData, 5 * 60 * 1000);
+    return () => window.clearInterval(interval);
   }, [loadData]);
 
   // ─── 3. Inisialisasi globe.gl & Tata Surya (Solar System 3D) ───────────────
@@ -360,7 +375,7 @@ export default function GoogleEarthGlobeMap() {
     const globe = new Globe(container)
       .globeMaterial(dayNightMaterial)
       .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
-      .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
+      .backgroundColor('#040b17')
       .atmosphereColor('#38bdf8')
       .atmosphereAltitude(0.24)
       // ── Poligon Batas Negara Interaktif ──
@@ -431,7 +446,7 @@ export default function GoogleEarthGlobeMap() {
     // Controls
     const controls = globe.controls();
     if (controls) {
-      controls.autoRotate = true;
+      controls.autoRotate = !reducedMotion.current;
       controls.autoRotateSpeed = 0.6;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
@@ -441,6 +456,7 @@ export default function GoogleEarthGlobeMap() {
     const scene: THREE.Scene = globe.scene();
     const solarGroup = new THREE.Group();
     solarGroup.name = 'SolarSystemGroup';
+    solarGroup.visible = false;
 
     // A. 3D Stars Field (5,000 Partikel Bintang Kosmis)
     const starCount = 4500;
@@ -582,7 +598,7 @@ export default function GoogleEarthGlobeMap() {
     // ─── ANIMATION LOOP TATA SURYA ───────────────────────────────────────────
     let orbitTick = 0;
     const animateSolar = () => {
-      orbitTick += 0.0035;
+      if (solarGroup.visible && !reducedMotion.current) orbitTick += 0.0035;
 
       // Rotasi Bulan mengelilingi Bumi
       const moonR = 85;
@@ -623,9 +639,9 @@ export default function GoogleEarthGlobeMap() {
 
         const cam = globe.camera() as any;
         if (cam) {
-          if (streamMode === 'normal' && w > 1024) {
+          if (streamModeRef.current === 'normal' && w > 1024) {
             cam.setViewOffset(w, h, -160, 0, w, h);
-          } else if (streamMode === 'expanded' && w > 1024) {
+          } else if (streamModeRef.current === 'expanded' && w > 1024) {
             cam.setViewOffset(w, h, -240, 0, w, h);
           } else if (cam.clearViewOffset) {
             cam.clearViewOffset();
@@ -637,17 +653,29 @@ export default function GoogleEarthGlobeMap() {
       }
     };
 
+    resizeGlobeRef.current = updateCentering;
     updateCentering();
-    window.addEventListener('resize', updateCentering);
+    const resizeObserver = new ResizeObserver(updateCentering);
+    resizeObserver.observe(container);
 
     return () => {
       if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-      window.removeEventListener('resize', updateCentering);
+      resizeObserver.disconnect();
+      resizeGlobeRef.current = null;
+      globe._destructor();
+      dayTex.dispose();
+      nightTex.dispose();
+      dayNightMaterial.dispose();
       container.innerHTML = '';
       globeInstanceRef.current = null;
       shaderMatRef.current = null;
       solarGroupRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    streamModeRef.current = streamMode;
+    resizeGlobeRef.current?.();
   }, [streamMode]);
 
   // ─── Toggle Tampilan Tata Surya ───────────────────────────────────────────
@@ -774,14 +802,29 @@ export default function GoogleEarthGlobeMap() {
     );
   };
 
-  const filteredEvents = events.filter(e => 
+  const visibleEvents = events.filter(e => activeLayers.includes(getCategoryMeta(e.category).layerGroup));
+  const filteredEvents = visibleEvents.filter(e =>
     !streamSearch || e.title.toLowerCase().includes(streamSearch.toLowerCase()) || e.category.toLowerCase().includes(streamSearch.toLowerCase())
   );
+  const earthquakeCount = events.filter(e => e.category === 'Earthquakes').length;
+  const weatherCount = events.filter(e => getCategoryMeta(e.category).layerGroup === 'weather').length;
 
   const selectedMeta = selectedEvent ? getCategoryMeta(selectedEvent.category) : null;
 
   return (
-    <div className="relative w-full h-full bg-[#020510] text-white font-mono overflow-hidden select-none">
+    <div className="map-experience">
+          <div className="map-ambient" aria-hidden="true" />
+          <header className="map-heading">
+            <div>
+              <span className="map-eyebrow">EXPLORE THE WORLD · LIVE INTELLIGENCE</span>
+              <h1>Dunia bergerak. Tetap terhubung.</h1>
+              <p>Jelajahi bumi dan pantau peristiwa global dalam satu pandangan.</p>
+            </div>
+            <div className="map-heading-status" role="status">
+              {!loading && !dataError && <span className="map-live-dot" />}
+              {loading ? 'Menyinkronkan data…' : dataError ? 'Sebagian data belum tersedia' : 'Pemantauan global aktif'}
+            </div>
+          </header>
       {/* ─── 1. KANVAS 3D GLOBE DENGAN DAY & NIGHT TERMINATOR & TATA SURYA ─── */}
       <div
         ref={globeContainerRef}
@@ -789,12 +832,12 @@ export default function GoogleEarthGlobeMap() {
       />
 
       {/* ─── 2. FLOATING HUD KIRI ATAS: BRANDING & KONTROL MODE ─── */}
-      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 pointer-events-auto max-w-sm sm:max-w-md">
-        <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2 rounded-xl bg-[#040d21]/85 backdrop-blur-md border border-cyan-500/30 shadow-[0_0_20px_rgba(0,229,255,0.2)]">
+      <div className="map-workspace-tools">
+        <div className="map-brand-card">
           <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#00e5ff] flex-shrink-0" />
           <div className="min-w-0">
             <div className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2 flex-wrap">
-              <span>WORLD MONITOR</span>
+              <span>LIVE WORLD MAP</span>
               <span className="text-[9px] text-amber-300 border border-amber-600/70 px-1.5 py-0.2 rounded bg-amber-950/60 font-bold">
                 {globeTheme.replace('_', ' ')}
               </span>
@@ -806,16 +849,17 @@ export default function GoogleEarthGlobeMap() {
               )}
             </div>
             <div className="text-[10px] text-gray-400 truncate">
-              {countries.length} NEGARA · BINTANG, MATAHARI & MARS 3D
+              {countries.length || '—'} negara · {visibleEvents.length} peristiwa ditampilkan
             </div>
           </div>
         </div>
 
         {/* Action Toolbar: Rotasi, Tema Globe, Tata Surya, dan Layers */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="map-toolbar" role="group" aria-label="Pengaturan globe">
           {/* Rotasi ON/OFF */}
           <button
             onClick={() => setIsRotating(!isRotating)}
+            aria-pressed={isRotating}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border backdrop-blur-md transition-all ${
               isRotating
                 ? 'bg-cyan-950/60 border-cyan-500/50 text-cyan-300 shadow-[0_0_10px_rgba(0,229,255,0.25)]'
@@ -827,7 +871,8 @@ export default function GoogleEarthGlobeMap() {
 
           {/* Ganti Tema Globe / Model Peta */}
           <button
-            onClick={() => setShowThemeMenu(!showThemeMenu)}
+            onClick={() => { setShowThemeMenu(!showThemeMenu); setShowLayerMenu(false); }}
+            aria-expanded={showThemeMenu}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-950/60 border border-blue-700/60 hover:border-blue-400 backdrop-blur-md transition"
             title="Pilih Model Globe yang Lain"
           >
@@ -838,6 +883,7 @@ export default function GoogleEarthGlobeMap() {
           {/* Toggle Tata Surya 3D */}
           <button
             onClick={() => setSolarSystemActive(!solarSystemActive)}
+            aria-pressed={solarSystemActive}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border backdrop-blur-md transition ${
               solarSystemActive
                 ? 'bg-amber-950/60 border-amber-500/70 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
@@ -864,13 +910,16 @@ export default function GoogleEarthGlobeMap() {
           <button
             onClick={loadData}
             disabled={loading}
+            aria-label="Perbarui data insiden"
+            title="Perbarui data insiden"
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-400 bg-[#040d21]/80 border border-cyan-800/60 hover:border-cyan-400 backdrop-blur-md transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
           <button
-            onClick={() => setShowLayerMenu(!showLayerMenu)}
+            onClick={() => { setShowLayerMenu(!showLayerMenu); setShowThemeMenu(false); }}
+            aria-expanded={showLayerMenu}
             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border backdrop-blur-md transition ${
               showLayerMenu
                 ? 'bg-cyan-500 text-black border-cyan-400'
@@ -978,7 +1027,7 @@ export default function GoogleEarthGlobeMap() {
       </div>
 
       {/* ─── 3. FLOATING VIEW CONTROLS (KANAN ATAS) ─── */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col gap-2 pointer-events-auto">
+      <div className="map-view-controls">
         <button
           onClick={() => {
             const globe = globeInstanceRef.current;
@@ -1035,7 +1084,7 @@ export default function GoogleEarthGlobeMap() {
 
       {/* ─── 4. FLOATING HAMBURGER PILL SAAT STREAM DICIOUTKAN (COLLAPSED) ─── */}
       {streamMode === 'collapsed' && (
-        <div className="absolute bottom-5 right-5 z-20 pointer-events-auto">
+        <div className="absolute bottom-16 right-5 z-20 pointer-events-auto">
           <button
             onClick={() => setStreamMode('normal')}
             className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-[#040d21]/90 hover:bg-cyan-950/90 border border-cyan-500/60 hover:border-cyan-400 text-cyan-300 hover:text-white shadow-[0_0_25px_rgba(0,229,255,0.3)] backdrop-blur-xl transition group cursor-pointer"
@@ -1043,10 +1092,10 @@ export default function GoogleEarthGlobeMap() {
             <Menu className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition" />
             <div className="text-left font-mono">
               <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span>STREAM INCIDENTS</span>
+                <span>BUKA PERISTIWA</span>
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               </div>
-              <div className="text-[10px] text-cyan-400">{events.length} TITIK INSIDEN AKTIF</div>
+              <div className="text-[10px] text-cyan-400">{visibleEvents.length} PERISTIWA TERPANTAU</div>
             </div>
           </button>
         </div>
@@ -1055,9 +1104,7 @@ export default function GoogleEarthGlobeMap() {
       {/* ─── 5. FLOATING TARGET, CELESTIAL & STREAM INCIDENTS PANEL ─── */}
       {streamMode !== 'collapsed' && (
         <div
-          className={`absolute bottom-5 right-5 top-16 z-20 flex flex-col gap-3 pointer-events-auto transition-all duration-300 ${
-            streamMode === 'expanded' ? 'w-full max-w-lg' : 'w-80'
-          }`}
+          className={`map-stream-panel ${streamMode === 'expanded' ? 'is-expanded' : ''}`}
         >
           {/* A. Celestial Inspector (Muncul Saat Planet/Matahari Diklik) */}
           {selectedPlanet && (
@@ -1198,17 +1245,17 @@ export default function GoogleEarthGlobeMap() {
           )}
 
           {/* D. Live Global Stream List dengan Mode Hamburger (Perkecil / Perbesar) */}
-          <div className="flex-1 rounded-2xl bg-[#03091e]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl flex flex-col overflow-hidden min-h-0">
+          <div className="map-stream-card">
             {/* Header Stream Incidents dengan Kontrol Ukuran */}
-            <div className="px-3.5 py-2.5 border-b border-cyan-900/40 flex items-center justify-between bg-black/40">
+            <div className="map-stream-header">
               <span className="text-xs font-bold text-cyan-300 tracking-wider flex items-center gap-1.5">
                 <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                STREAM INCIDENTS
+                Peristiwa global
               </span>
               
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-gray-400 font-mono px-1.5 py-0.5 rounded bg-black/50 border border-cyan-900/50">
-                  {filteredEvents.length} NODES
+                  {filteredEvents.length}
                 </span>
 
                 {/* Tombol Perbesar / Perkecil Ukuran Drawer */}
@@ -1232,15 +1279,18 @@ export default function GoogleEarthGlobeMap() {
             </div>
 
             {/* Input Pencarian Insiden Cepat */}
-            <div className="p-2 border-b border-cyan-950/80 bg-black/20">
+            <div className="map-stream-search">
               <input
                 type="text"
                 value={streamSearch}
                 onChange={e => setStreamSearch(e.target.value)}
                 placeholder="Cari gempa, badai, lokasi..."
+                aria-label="Cari peristiwa atau lokasi"
                 className="w-full px-2.5 py-1 rounded-lg bg-black/50 border border-cyan-900/40 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-cyan-400 font-mono"
               />
             </div>
+
+            {dataError && <p className="map-error" role="status">{dataError}</p>}
 
             {/* List Stream Items */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1.5 overscroll-contain">
@@ -1255,7 +1305,8 @@ export default function GoogleEarthGlobeMap() {
                       borderColor: isSelected ? meta.color : 'rgba(255,255,255,0.06)',
                       background: isSelected ? `${meta.color}25` : 'rgba(10, 20, 45, 0.45)',
                     }}
-                    className="w-full text-left p-2 rounded-xl border transition-all hover:border-cyan-400/60 block group"
+                    aria-pressed={isSelected}
+                    className="map-incident-card group"
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span
@@ -1271,7 +1322,7 @@ export default function GoogleEarthGlobeMap() {
                       <span className="text-[9px] text-gray-500 font-mono">{ev.source}</span>
                     </div>
 
-                    <div className="text-[11px] text-gray-200 line-clamp-1 group-hover:text-cyan-200 transition">
+                    <div className="text-xs leading-relaxed text-gray-200 line-clamp-2 group-hover:text-cyan-200 transition">
                       {ev.title}
                     </div>
 
@@ -1286,8 +1337,12 @@ export default function GoogleEarthGlobeMap() {
               })}
 
               {filteredEvents.length === 0 && (
-                <div className="text-center py-6 text-gray-500 text-xs">
-                  Tidak ada insiden yang cocok dengan filter.
+                <div className="map-empty" role="status">
+                  {loading ? (
+                    <><RefreshCw className="w-5 h-5 mx-auto mb-3 animate-spin" />Menghubungkan ke NASA & USGS…</>
+                  ) : (
+                    <><GlobeIcon className="w-6 h-6 mx-auto mb-3 text-teal-400" />Belum ada peristiwa untuk ditampilkan.<br />Coba ubah pencarian, filter, atau perbarui data.</>
+                  )}
                 </div>
               )}
             </div>
@@ -1295,14 +1350,25 @@ export default function GoogleEarthGlobeMap() {
         </div>
       )}
 
-      {/* ─── 6. FOOTER INFORMATIF BAWAH ─── */}
-      <div className="absolute bottom-2 left-4 z-10 text-[10px] text-gray-500 pointer-events-none hidden sm:flex items-center gap-2">
-        <span className="text-cyan-400">WORLD MONITOR 3D</span>
-        <span>•</span>
-        <span>GOOGLE EARTH DAY/NIGHT & TATA SURYA TIGA DIMENSI</span>
-        <span>•</span>
-        <span>KLIK PLANET UNTUK INSPEKSI ASTRONOMI</span>
-      </div>
+      <section className="map-stats" aria-label="Ringkasan pemantauan global">
+        {[
+          { label: 'Peristiwa terpantau', value: events.length, icon: MapPin },
+          { label: 'Gempa · 7 hari terakhir', value: earthquakeCount, icon: Activity },
+          { label: 'Peristiwa cuaca', value: weatherCount, icon: CloudRain },
+        ].map(stat => (
+          <div className="map-stat" key={stat.label}>
+            <span className="map-stat-icon"><stat.icon className="w-4 h-4" /></span>
+            <strong>{lastUpdated ? stat.value.toLocaleString('id-ID') : '—'}</strong>
+            <small>{stat.label}</small>
+          </div>
+        ))}
+      </section>
+
+      <footer className="map-footer">
+        <span className="flex items-center gap-2"><Compass className="w-3.5 h-3.5 text-teal-300" />Geser untuk menjelajah · Klik titik untuk detail</span>
+        <span>NASA EONET + USGS · Pembaruan otomatis 5 menit</span>
+        <span className="tabular-nums">{lastUpdated ? `Diperbarui ${lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : 'Menunggu data'}</span>
+      </footer>
     </div>
   );
 }

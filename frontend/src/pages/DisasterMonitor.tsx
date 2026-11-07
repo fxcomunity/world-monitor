@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Flame, Activity, CloudLightning, ShieldAlert,
   Play, RefreshCw, Radio, Sparkles, Filter, Video, AlertTriangle,
-  ExternalLink, Layers, Search, KeyRound, CheckCircle2,
+  ExternalLink, Layers, Search,
   Newspaper, Tv, Clock, Globe2
 } from 'lucide-react';
 import {
@@ -34,45 +34,16 @@ interface QuakeEvent {
   lng: number;
 }
 
-// Saluran Resmi YouTube Terverifikasi (Fallback jika kuota API habis)
-const VERIFIED_STREAMS = [
-  {
-    id: 'jPTD2gnZFUw',
-    title: 'NASA Live: Earth from Space (ISS HD)',
-    channel: 'NASA Official Space Channel',
-    embedUrl: 'https://www.youtube-nocookie.com/embed/jPTD2gnZFUw?autoplay=1&mute=1&playsinline=1',
-    youtubeWatch: 'https://www.youtube.com/watch?v=jPTD2gnZFUw',
-    badge: 'ORBIT LIVE',
-    desc: 'Observasi siklon, formasi awan, dan atmosfer bumi langsung dari Stasiun Luar Angkasa Internasional.',
-  },
-  {
-    id: 'gCNeDWCI0vo',
-    title: 'Breaking Disasters & Global Crisis News 24/7',
-    channel: 'Al Jazeera English Live',
-    embedUrl: 'https://www.youtube-nocookie.com/embed/gCNeDWCI0vo?autoplay=1&mute=1&playsinline=1',
-    youtubeWatch: 'https://www.youtube.com/watch?v=gCNeDWCI0vo',
-    badge: 'CRISIS LIVE',
-    desc: 'Liputan siaran langsung krisis darurat kemanusiaan, gempa, dan badai besar di seluruh dunia.',
-  },
-  {
-    id: '86YLFOog4GM',
-    title: 'Active Volcanoes Global Live Cam',
-    channel: 'Volcano World Observatory',
-    embedUrl: 'https://www.youtube-nocookie.com/embed/86YLFOog4GM?autoplay=1&mute=1&playsinline=1',
-    youtubeWatch: 'https://www.youtube.com/watch?v=86YLFOog4GM',
-    badge: 'VOLCANO LIVE',
-    desc: 'Kamera pantau aktivitas termal dan erupsi gunung berapi aktif dunia secara langsung.',
-  },
-  {
-    id: 'rvtygG4n6ew',
-    title: 'Live Earthquake Monitoring 24/7 | GlobalQuake',
-    channel: 'GlobalQuake Seismology',
-    embedUrl: 'https://www.youtube-nocookie.com/embed/rvtygG4n6ew?autoplay=1&mute=1&playsinline=1',
-    youtubeWatch: 'https://www.youtube.com/watch?v=rvtygG4n6ew',
-    badge: 'SEISMIC LIVE',
-    desc: 'Pemantau seismograf otomatis dan deteksi gempa bumi dunia secara real-time.',
-  },
-];
+interface ActiveStream {
+  id: string;
+  title: string;
+  channel: string;
+  embedUrl: string;
+  youtubeWatch: string;
+  badge: string;
+  desc: string;
+  isLive: boolean;
+}
 
 export default function DisasterMonitor() {
   const [disasters, setDisasters] = useState<DisasterEvent[]>([]);
@@ -83,7 +54,7 @@ export default function DisasterMonitor() {
 
   // Video / Radar mode
   const [feedMode, setFeedMode] = useState<'YOUTUBE' | 'WINDY'>('WINDY');
-  const [activeStream, setActiveStream] = useState(VERIFIED_STREAMS[0]);
+  const [activeStream, setActiveStream] = useState<ActiveStream | null>(null);
   const [customYtId, setCustomYtId] = useState('');
 
   // Tab: Siaran Langsung (Live) vs Berita Bencana (News)
@@ -91,12 +62,11 @@ export default function DisasterMonitor() {
 
   // YouTube Data API v3 State
   const [liveVideos, setLiveVideos] = useState<YouTubeLiveItem[]>([]);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const [newsVideos, setNewsVideos] = useState<YouTubeLiveItem[]>([]);
   const [loadingYt, setLoadingYt] = useState(false);
   const [ytTopic, setYtTopic] = useState('earthquake natural disaster live stream');
   const [newsTopic, setNewsTopic] = useState('natural disaster earthquake volcano eruption breaking news');
-  const hasYtKey = Boolean(import.meta.env.VITE_YOUTUBE_KEY);
-
   // AI Analysis State
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -118,29 +88,20 @@ export default function DisasterMonitor() {
     }
   };
 
-  const searchYouTube = async (query: string) => {
+  const searchYouTube = useCallback(async (query: string) => {
     setLoadingYt(true);
     try {
       const items = await fetchYouTubeLiveDisasters(query);
       setLiveVideos(items);
-      if (items.length > 0 && feedMode === 'YOUTUBE') {
-        const top = items[0];
-        setActiveStream({
-          id: top.id,
-          title: top.title,
-          channel: top.channel,
-          embedUrl: `https://www.youtube-nocookie.com/embed/${top.id}?autoplay=1&mute=1&playsinline=1`,
-          youtubeWatch: `https://www.youtube.com/watch?v=${top.id}`,
-          badge: '🔴 LIVE V3',
-          desc: 'Siaran langsung terdeteksi otomatis via YouTube Data API v3',
-        });
-      }
+      setLiveError(null);
     } catch (err) {
       console.error('Failed to search YouTube live:', err);
+      setLiveVideos([]);
+      setLiveError(err instanceof Error ? err.message : 'Gagal memeriksa siaran langsung.');
     } finally {
       setLoadingYt(false);
     }
-  };
+  }, []);
 
   const searchDisasterNews = async (query: string) => {
     setLoadingYt(true);
@@ -156,11 +117,23 @@ export default function DisasterMonitor() {
 
   useEffect(() => {
     loadData();
-    searchYouTube(ytTopic);
     searchDisasterNews(newsTopic);
     const interval = setInterval(loadData, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    searchYouTube(ytTopic);
+    const interval = setInterval(() => searchYouTube(ytTopic), 60000);
+    return () => clearInterval(interval);
+  }, [searchYouTube, ytTopic]);
+
+  useEffect(() => {
+    if (activeStream?.isLive && !liveVideos.some(video => video.id === activeStream.id)) {
+      setActiveStream(null);
+      setFeedMode('WINDY');
+    }
+  }, [activeStream, liveVideos]);
 
   const handleRunAI = async () => {
     setAiLoading(true);
@@ -210,6 +183,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
       youtubeWatch: `https://www.youtube.com/watch?v=${videoId}`,
       badge: 'CUSTOM',
       desc: 'Video atau siaran langsung pilihan pengguna yang disematkan ke monitor.',
+      isLive: false,
     });
     setFeedMode('YOUTUBE');
   };
@@ -314,15 +288,9 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
           </div>
 
           <div className="flex items-center gap-2 text-[11px] font-mono">
-            {hasYtKey ? (
-              <span className="text-emerald-400 flex items-center gap-1 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">
-                <CheckCircle2 className="w-3 h-3" /> YouTube Data API v3 Aktif
-              </span>
-            ) : (
-              <span className="text-yellow-400 flex items-center gap-1 bg-yellow-950/40 px-2 py-0.5 rounded border border-yellow-800/40">
-                <KeyRound className="w-3 h-3" /> Mode Fallback Terverifikasi
-              </span>
-            )}
+            <span className="text-emerald-400 flex items-center gap-1 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">
+              <Radio className="w-3 h-3" /> Pemeriksaan live tiap 60 detik
+            </span>
           </div>
         </div>
 
@@ -341,7 +309,6 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 key={top.label}
                 onClick={() => {
                   setYtTopic(top.q);
-                  searchYouTube(top.q);
                 }}
                 className={`px-2.5 py-1 rounded text-[11px] font-mono transition flex items-center gap-1 ${
                   ytTopic === top.q
@@ -396,7 +363,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 className="absolute inset-0 w-full h-full border-0"
                 allow="geolocation"
               />
-            ) : (
+            ) : activeStream ? (
               <iframe
                 src={activeStream.embedUrl}
                 title={activeStream.title}
@@ -404,6 +371,10 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-gray-400">
+                Pilih siaran langsung yang masih aktif dari daftar.
+              </div>
             )}
           </div>
 
@@ -413,14 +384,14 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
                   feedMode === 'WINDY' ? 'bg-cyan-600 text-black' : 'bg-red-600 text-white'
                 }`}>
-                  {feedMode === 'WINDY' ? 'LIVE SATELIT RADAR' : activeStream.badge}
+                  {feedMode === 'WINDY' ? 'LIVE SATELIT RADAR' : activeStream?.badge || 'YOUTUBE'}
                 </span>
                 <span className="text-xs font-semibold text-white truncate">
-                  {feedMode === 'WINDY' ? 'Radar Interaktif Cuaca, Badai Tropis, & Curah Hujan Global' : activeStream.title}
+                  {feedMode === 'WINDY' ? 'Radar Interaktif Cuaca, Badai Tropis, & Curah Hujan Global' : activeStream?.title || 'Belum ada siaran dipilih'}
                 </span>
               </div>
               <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-1">
-                {feedMode === 'WINDY' ? 'Data Doppler radar real-time dari stasiun meteorologi dunia bebas blokir.' : activeStream.desc}
+                {feedMode === 'WINDY' ? 'Data Doppler radar real-time dari stasiun meteorologi dunia bebas blokir.' : activeStream?.desc || 'Siaran yang tidak lagi live otomatis dihapus dari daftar.'}
               </p>
             </div>
 
@@ -432,7 +403,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 Ganti ke: {feedMode === 'WINDY' ? 'Video Player' : 'Windy Radar'}
               </button>
 
-              {feedMode === 'YOUTUBE' && activeStream.youtubeWatch && (
+              {feedMode === 'YOUTUBE' && activeStream?.youtubeWatch && (
                 <a
                   href={activeStream.youtubeWatch}
                   target="_blank"
@@ -453,7 +424,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
             <span>{videoTab === 'LIVE' ? 'Pilih Siaran Langsung (Live):' : 'Berita Video Terkini (YouTube):'}</span>
             <span className="text-[10px] text-cyan-400 font-bold">
               {videoTab === 'LIVE'
-                ? (liveVideos.length > 0 ? `${liveVideos.length} Stream Aktif` : '4 Stream Resmi')
+                ? `${liveVideos.length} Stream Aktif`
                 : `${newsVideos.length} Berita Baru`}
             </span>
           </div>
@@ -461,10 +432,17 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
           {/* List Video Cards with Scroll */}
           <div className="space-y-2 overflow-y-auto max-h-[380px] pr-1 overscroll-contain">
             {videoTab === 'LIVE' ? (
-              (liveVideos.length > 0 ? liveVideos : VERIFIED_STREAMS).map((v: any) => {
-                const videoId = v.id || v.videoId;
-                const isSelected = feedMode === 'YOUTUBE' && activeStream.id === videoId;
-                return (
+              liveVideos.length === 0 ? (
+                <div className="text-center py-10 text-gray-500 text-xs font-mono">
+                  {loadingYt
+                    ? 'Memeriksa siaran aktif...'
+                    : liveError || 'Tidak ada siaran langsung aktif saat ini.'}
+                </div>
+              ) : (
+                liveVideos.map(v => {
+                  const videoId = v.id;
+                  const isSelected = feedMode === 'YOUTUBE' && activeStream?.id === videoId;
+                  return (
                   <button
                     key={videoId}
                     onClick={() => {
@@ -475,7 +453,8 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                         embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1`,
                         youtubeWatch: `https://www.youtube.com/watch?v=${videoId}`,
                         badge: '🔴 LIVE YT',
-                        desc: v.desc || 'Siaran langsung resmi terhubung dari platform YouTube.',
+                        desc: 'Siaran langsung terdeteksi oleh YouTube Data API.',
+                        isLive: true,
                       });
                       setFeedMode('YOUTUBE');
                     }}
@@ -500,7 +479,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-black/50 text-red-400 border border-red-900/50">
-                          {v.badge || 'LIVE'}
+                          LIVE
                         </span>
                         {isSelected && (
                           <span className="text-[10px] font-mono text-cyan-400 font-bold">
@@ -512,8 +491,9 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                       <div className="text-[10px] text-gray-400 truncate mt-0.5">{v.channel}</div>
                     </div>
                   </button>
-                );
-              })
+                  );
+                })
+              )
             ) : (
               newsVideos.length === 0 ? (
                 <div className="text-center py-10 text-gray-500 text-xs font-mono">
@@ -521,7 +501,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                 </div>
               ) : (
                 newsVideos.map(n => {
-                  const isSelected = feedMode === 'YOUTUBE' && activeStream.id === n.id;
+                  const isSelected = feedMode === 'YOUTUBE' && activeStream?.id === n.id;
                   return (
                     <button
                       key={n.id}
@@ -534,6 +514,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                           youtubeWatch: `https://www.youtube.com/watch?v=${n.id}`,
                           badge: '📰 BERITA',
                           desc: `Dipublikasikan pada: ${new Date(n.publishedAt).toLocaleString('id-ID')}`,
+                          isLive: false,
                         });
                         setFeedMode('YOUTUBE');
                       }}

@@ -50,6 +50,7 @@ interface Env {
   ADMIN_PASS?: string;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
+  TURNSTILE_ALLOWED_HOSTNAMES?: string;
 }
 
 const TURNSTILE_SESSION_COOKIE = 'wm_turnstile_session';
@@ -462,7 +463,15 @@ export default {
             success?: boolean;
             hostname?: string;
           };
-          if (!verification.success || verification.hostname !== url.hostname) {
+          const allowedHostnames = new Set([
+            url.hostname.toLowerCase(),
+            ...(env.TURNSTILE_ALLOWED_HOSTNAMES || '')
+              .split(',')
+              .map(hostname => hostname.trim().toLowerCase())
+              .filter(Boolean),
+          ]);
+          if (!verification.success || !verification.hostname
+            || !allowedHostnames.has(verification.hostname.toLowerCase())) {
             return jsonResponse({ error: 'Verifikasi gagal. Silakan coba lagi.' }, 403);
           }
 
@@ -481,6 +490,63 @@ export default {
           if (!(await hasValidTurnstileSession(request, env.TURNSTILE_SECRET_KEY))) {
             return jsonResponse({ error: 'Verifikasi manusia diperlukan.' }, 403);
           }
+        }
+
+        if (url.pathname === '/api/environment/air-quality' && request.method === 'GET') {
+          const latitudes = (url.searchParams.get('latitude') || '').split(',');
+          const longitudes = (url.searchParams.get('longitude') || '').split(',');
+          const validCoordinate = (value: string, min: number, max: number) => {
+            if (!value.trim()) return false;
+            const coordinate = Number(value);
+            return Number.isFinite(coordinate) && coordinate >= min && coordinate <= max;
+          };
+          if (latitudes.length === 0 || latitudes.length > 24
+            || latitudes.length !== longitudes.length
+            || latitudes.some(value => !validCoordinate(value, -90, 90))
+            || longitudes.some(value => !validCoordinate(value, -180, 180))) {
+            return jsonResponse({ error: 'Koordinat lokasi kualitas udara tidak valid.' }, 400);
+          }
+
+          const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
+          const cacheKey = new Request(url.toString());
+          const cachedResponse = await cache.match(cacheKey);
+          if (cachedResponse) return cachedResponse;
+
+          const upstreamUrl = new URL('https://air-quality-api.open-meteo.com/v1/air-quality');
+          upstreamUrl.search = new URLSearchParams({
+            latitude: latitudes.join(','),
+            longitude: longitudes.join(','),
+            current: 'pm10,pm2_5,ozone,us_aqi',
+          }).toString();
+          const response = await fetch(upstreamUrl, { signal: AbortSignal.timeout(10000) });
+          if (!response.ok) {
+            return jsonResponse({ error: `Open-Meteo HTTP ${response.status}` }, 502);
+          }
+
+          const data = await response.json();
+          const result = jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=600' });
+          await cache.put(cacheKey, result.clone());
+          return result;
+        }
+
+        if (url.pathname === '/api/disasters' && request.method === 'GET') {
+          const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
+          const cacheKey = new Request(new URL('/api/disasters', url.origin).toString());
+          const cachedResponse = await cache.match(cacheKey);
+          if (cachedResponse) return cachedResponse;
+
+          const response = await fetch(
+            'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=60',
+            { signal: AbortSignal.timeout(10000) },
+          );
+          if (!response.ok) {
+            return jsonResponse({ error: `NASA EONET HTTP ${response.status}` }, 502);
+          }
+
+          const data = await response.json();
+          const result = jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=30' });
+          await cache.put(cacheKey, result.clone());
+          return result;
         }
 
         // [GET] /api/maintenance — Ambil status maintenance sistem secara live
@@ -964,6 +1030,11 @@ export default {
         // [GET] /api/transport/flights — OpenSky Network ADS-B Radar
         if (url.pathname === '/api/transport/flights') {
           try {
+            const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
+            const cacheKey = new Request(new URL('/api/transport/flights', url.origin).toString());
+            const cachedResponse = await cache.match(cacheKey);
+            if (cachedResponse) return cachedResponse;
+
             const res = await fetch('https://opensky-network.org/api/states/all', {
               signal: AbortSignal.timeout(10000),
             });
@@ -971,20 +1042,21 @@ export default {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const json: any = await res.json();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const flights = (json.states || []).slice(0, 80).map((s: any) => ({
+            const flights = (json.states || []).map((s: any) => ({
               icao24: s[0],
-              callsign: (s[1] || '').trim(),
-              country: s[2],
+              callsign: typeof s[1] === 'string' ? s[1].trim() : '',
+              country: s[2] || 'Unknown',
               lng: s[5],
               lat: s[6],
               altitude: s[7],
               velocity: s[9],
               heading: s[10],
-            })).filter((f: { lat: number | null }) => f.lat !== null);
+            })).filter((f: { lat: number | null; lng: number | null }) =>
+              Number.isFinite(f.lat) && Number.isFinite(f.lng));
 
-            return jsonResponse(flights, 200, {
-              'Cache-Control': 'public, max-age=30', // Cache 30 detik di edge
-            });
+            const result = jsonResponse(flights, 200, { 'Cache-Control': 'public, max-age=30' });
+            await cache.put(cacheKey, result.clone());
+            return result;
           } catch (e: unknown) {
             return jsonResponse({ error: (e as Error).message }, 500);
           }
@@ -1036,12 +1108,52 @@ export default {
 
           try {
             const q = url.searchParams.get('q') || 'earthquake natural disaster live stream';
-            const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&eventType=live&type=video&q=${encodeURIComponent(q)}&maxResults=6&key=${ytKey}`;
-            const res = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
-            const data = await res.json();
-            return jsonResponse(data, 200, {
-              'Cache-Control': 'public, max-age=600', // Cache 10 menit di edge
-            });
+            const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
+            const resultCacheKey = new Request(new URL(`/api/youtube/live?q=${encodeURIComponent(q)}`, url.origin));
+            const cachedResult = await cache.match(resultCacheKey);
+            if (cachedResult) return cachedResult;
+
+            const searchCacheKey = new Request(new URL(`/api/youtube/live/search?q=${encodeURIComponent(q)}`, url.origin));
+            let searchData: { items?: Array<{ id?: { videoId?: string } }> };
+            const cachedSearch = await cache.match(searchCacheKey);
+            if (cachedSearch) {
+              searchData = await cachedSearch.json();
+            } else {
+              const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&eventType=live&type=video&q=${encodeURIComponent(q)}&maxResults=6&key=${ytKey}`;
+              const searchResponse = await fetch(searchUrl, { signal: AbortSignal.timeout(8000) });
+              if (!searchResponse.ok) throw new Error(`YouTube search API HTTP ${searchResponse.status}`);
+              searchData = await searchResponse.json();
+              await cache.put(searchCacheKey, jsonResponse(searchData, 200, { 'Cache-Control': 'public, max-age=600' }));
+            }
+
+            const videoIds = (searchData.items || [])
+              .map(item => item.id?.videoId)
+              .filter((id): id is string => Boolean(id));
+            if (videoIds.length === 0) {
+              const emptyResult = jsonResponse({ ...searchData, items: [] }, 200, { 'Cache-Control': 'public, max-age=30' });
+              await cache.put(resultCacheKey, emptyResult.clone());
+              return emptyResult;
+            }
+
+            const verifyUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=${videoIds.join(',')}&key=${ytKey}`;
+            const verifyResponse = await fetch(verifyUrl, { signal: AbortSignal.timeout(8000) });
+            if (!verifyResponse.ok) throw new Error(`YouTube live status API HTTP ${verifyResponse.status}`);
+            const verifyData = await verifyResponse.json() as {
+              items?: Array<{
+                id: string;
+                snippet?: { liveBroadcastContent?: string };
+                liveStreamingDetails?: { actualEndTime?: string };
+              }>;
+            };
+            const activeIds = new Set((verifyData.items || [])
+              .filter(item => item.snippet?.liveBroadcastContent === 'live' && !item.liveStreamingDetails?.actualEndTime)
+              .map(item => item.id));
+            const result = jsonResponse({
+              ...searchData,
+              items: (searchData.items || []).filter(item => activeIds.has(item.id?.videoId || '')),
+            }, 200, { 'Cache-Control': 'public, max-age=30' });
+            await cache.put(resultCacheKey, result.clone());
+            return result;
           } catch (e: unknown) {
             return jsonResponse({ error: (e as Error).message }, 500);
           }

@@ -28,9 +28,8 @@ export async function fetchEarthquakes() {
 
 // ─── Bencana Global (NASA EONET — LIVE) ──────────────────────────────────────
 export async function fetchDisasters() {
-  const res = await fetch(
-    'https://eonet.gsfc.nasa.gov/api/v3/events?status=all&limit=60'
-  );
+  const res = await fetch('/api/disasters', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Disaster feed HTTP ${res.status}`);
   const json = await res.json();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return json.events.map((e: any) => ({
@@ -53,12 +52,29 @@ export async function fetchWeather(lat: number, lng: number) {
 }
 
 // ─── Kualitas Udara Real-Time (Open-Meteo Air Quality — LIVE) ────────────────
-export async function fetchAirQualityLive(lat: number, lng: number) {
-  const res = await fetch(
-    `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lng}&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,us_aqi`
-  );
-  const json = await res.json();
-  return json.current;
+export interface AirQualityCurrent {
+  pm10?: number;
+  pm2_5?: number;
+  ozone?: number;
+  us_aqi?: number;
+}
+
+export async function fetchAirQualityLive(
+  locations: Array<{ lat: number; lng: number }>,
+): Promise<Array<AirQualityCurrent | null>> {
+  const params = new URLSearchParams({
+    latitude: locations.map(location => location.lat).join(','),
+    longitude: locations.map(location => location.lng).join(','),
+  });
+  const res = await fetch(`/api/environment/air-quality?${params}`, { cache: 'no-store' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `Air quality API HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as Array<{ current?: AirQualityCurrent }> | { current?: AirQualityCurrent };
+  const locationsData = Array.isArray(data) ? data : [data];
+  return locationsData.map(location => location.current ?? null);
 }
 
 // ─── Nilai Tukar Valas Real-Time (ExchangeRate API — Cloudflare Edge Proxy) ───
@@ -531,14 +547,12 @@ export interface LiveFlight {
 }
 
 export async function fetchLiveFlights(): Promise<LiveFlight[]> {
-  try {
-    const res = await fetch('/api/transport/flights');
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    console.error('Failed to load live flights:', err);
-    return [];
+  const res = await fetch('/api/transport/flights', { cache: 'no-store' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `OpenSky API HTTP ${res.status}`);
   }
+  return res.json();
 }
 
 // ─── Energi Global (U.S. EIA Data) ───────────────────────────────────────────
@@ -575,48 +589,32 @@ export interface YouTubeLiveItem {
 }
 
 export async function fetchYouTubeLiveDisasters(query = 'earthquake natural disaster live stream'): Promise<YouTubeLiveItem[]> {
-  try {
-    const res = await fetch(`/api/youtube/live?q=${encodeURIComponent(query)}`);
-    const contentType = res.headers.get('content-type') || '';
-    if (res.ok && contentType.includes('application/json')) {
-      const data = await res.json();
-      if (data.items) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return data.items.map((item: any) => ({
-          id: item.id?.videoId,
-          title: item.snippet?.title || 'Live Broadcast',
-          channel: item.snippet?.channelTitle || 'YouTube Live',
-          thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url,
-          publishedAt: item.snippet?.publishedAt,
-        })).filter((item: { id: string }) => !!item.id);
-      }
-    }
-  } catch {
-    // fallback client-side
-  }
+  const res = await fetch(`/api/youtube/live?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`YouTube live API HTTP ${res.status}`);
+  const data = await res.json() as {
+    items?: Array<{
+      id?: { videoId?: string };
+      snippet?: {
+        title?: string;
+        channelTitle?: string;
+        thumbnails?: { medium?: { url?: string }; default?: { url?: string } };
+        publishedAt?: string;
+      };
+    }>;
+  };
+  if (!Array.isArray(data.items)) throw new Error('Respons YouTube live tidak valid.');
 
-  const ytKey = (import.meta.env.VITE_YOUTUBE_KEY as string) || 'AIzaSyAUpjD_u3txwJbUlXg3yLEQb_9gI5EmFrQ';
-  if (ytKey) {
-    try {
-      const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&eventType=live&type=video&q=${encodeURIComponent(query)}&maxResults=10&key=${ytKey}`;
-      const res = await fetch(apiUrl);
-      const data = await res.json();
-      if (data.items) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return data.items.map((item: any) => ({
-          id: item.id?.videoId,
-          title: item.snippet?.title || 'Live Broadcast',
-          channel: item.snippet?.channelTitle || 'YouTube Live',
-          thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url,
-          publishedAt: item.snippet?.publishedAt,
-        })).filter((item: { id: string }) => !!item.id);
-      }
-    } catch (e) {
-      console.error('Failed to fetch YouTube Live directly:', e);
-    }
-  }
-
-  return [];
+  return data.items.flatMap(item => {
+    const id = item.id?.videoId;
+    if (!id) return [];
+    return [{
+      id,
+      title: item.snippet?.title || 'Live Broadcast',
+      channel: item.snippet?.channelTitle || 'YouTube Live',
+      thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '',
+      publishedAt: item.snippet?.publishedAt || '',
+    }];
+  });
 }
 
 // ─── Berita Bencana & Krisis Terkini (YouTube Data API v3 Video Reports) ──────

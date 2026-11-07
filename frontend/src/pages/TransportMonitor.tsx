@@ -67,14 +67,19 @@ export default function TransportMonitor() {
   const [flights, setFlights] = useState<LiveFlight[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchFlight, setSearchFlight] = useState('');
+  const [flightPage, setFlightPage] = useState(0);
+  const [flightsError, setFlightsError] = useState<string | null>(null);
 
   const loadFlights = async () => {
     setLoading(true);
+    setFlightsError(null);
     try {
       const data = await fetchLiveFlights();
       setFlights(data);
+      setFlightPage(0);
     } catch (e) {
       console.error('Failed to load flights:', e);
+      setFlightsError(e instanceof Error ? e.message : 'Kesalahan tidak diketahui');
     } finally {
       setLoading(false);
     }
@@ -89,6 +94,12 @@ export default function TransportMonitor() {
   const filteredFlights = flights.filter(f =>
     f.callsign.toLowerCase().includes(searchFlight.toLowerCase()) ||
     f.country.toLowerCase().includes(searchFlight.toLowerCase())
+  );
+  const flightPageSize = 100;
+  const pageCount = Math.max(1, Math.ceil(filteredFlights.length / flightPageSize));
+  const visibleFlights = filteredFlights.slice(
+    flightPage * flightPageSize,
+    (flightPage + 1) * flightPageSize,
   );
 
   return (
@@ -208,7 +219,10 @@ export default function TransportMonitor() {
             type="text"
             placeholder="Cari Callsign atau Negara..."
             value={searchFlight}
-            onChange={e => setSearchFlight(e.target.value)}
+            onChange={e => {
+              setSearchFlight(e.target.value);
+              setFlightPage(0);
+            }}
             className="px-3 py-1 rounded bg-black/40 border border-cyan-900/50 text-xs font-mono text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 w-full sm:w-64"
           />
         </div>
@@ -217,6 +231,10 @@ export default function TransportMonitor() {
           {loading ? (
             <div className="text-center py-12 text-cyan-500/70 text-xs font-mono">
               Memindai transponder pesawat di ruang udara internasional...
+            </div>
+          ) : flightsError ? (
+            <div className="text-center py-12 text-amber-400 text-xs font-mono">
+              Gagal memuat data OpenSky: {flightsError}
             </div>
           ) : filteredFlights.length === 0 ? (
             <div className="text-center py-12 text-gray-500 text-xs font-mono">
@@ -235,7 +253,7 @@ export default function TransportMonitor() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-cyan-950/50">
-                {filteredFlights.map(f => (
+                {visibleFlights.map(f => (
                   <tr key={f.icao24} className="hover:bg-cyan-950/20 transition">
                     <td className="py-2.5 px-3 font-bold text-cyan-300 flex items-center gap-1.5">
                       <Plane className="w-3 h-3 text-cyan-500 rotate-45" />
@@ -254,6 +272,34 @@ export default function TransportMonitor() {
             </table>
           )}
         </div>
+        {!loading && !flightsError && filteredFlights.length > 0 && (
+          <div className="flex items-center justify-between gap-3 pt-3 text-[10px] font-mono text-gray-400">
+            <span>
+              Menampilkan {flightPage * flightPageSize + 1}–{Math.min((flightPage + 1) * flightPageSize, filteredFlights.length)} dari {filteredFlights.length} pesawat
+            </span>
+            {pageCount > 1 && (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={flightPage === 0}
+                  onClick={() => setFlightPage(page => Math.max(0, page - 1))}
+                  className="px-2 py-1 rounded border border-cyan-900 disabled:opacity-40"
+                >
+                  Sebelumnya
+                </button>
+                <span className="py-1">{flightPage + 1}/{pageCount}</span>
+                <button
+                  type="button"
+                  disabled={flightPage + 1 >= pageCount}
+                  onClick={() => setFlightPage(page => Math.min(pageCount - 1, page + 1))}
+                  className="px-2 py-1 rounded border border-cyan-900 disabled:opacity-40"
+                >
+                  Berikutnya
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
