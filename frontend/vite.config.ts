@@ -8,9 +8,8 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'https://world-monitor.aqsholhalqi4.workers.dev',
+        target: 'http://localhost:8787',
         changeOrigin: true,
-        secure: false,
       },
     },
   },

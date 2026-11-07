@@ -779,7 +779,7 @@ export default {
           }, 502);
         }
 
-        // [GET] /api/technology/news — Berita sains & teknologi terbaru dari GDELT
+        // [GET] /api/technology/news — Berita sains & teknologi terbaru dari GDELT / Google News RSS
         if (url.pathname === '/api/technology/news' && request.method === 'GET') {
           const cache = (globalThis.caches as CacheStorage & { default: Cache }).default;
           const cacheKey = new Request(new URL('/api/technology/news', url.origin).toString());
@@ -795,42 +795,108 @@ export default {
             sort: 'datedesc',
           }).toString();
 
+          const topicalTitle = /\b(?:technology|tech|science|scientific|research|space|NASA|satellite|semiconductor|chip|artificial intelligence|AI|robot(?:ics)?|quantum|innovation|breakthrough|discovery|biotech|astronomy|physics|engineering|software|computer)\b/i;
+          const normalizeArticles = (items: Array<{
+            url?: string;
+            title?: string;
+            publishedAt?: string;
+            source?: string;
+            country?: string;
+          }>) => items.flatMap(article => {
+            if (!article.url || !article.title || !topicalTitle.test(article.title)) return [];
+            const publishedAt = article.publishedAt ? new Date(article.publishedAt) : null;
+            if (!publishedAt || !Number.isFinite(publishedAt.getTime())) return [];
+
+            try {
+              const articleUrl = new URL(article.url);
+              if (!['http:', 'https:'].includes(articleUrl.protocol)) return [];
+            } catch {
+              return [];
+            }
+
+            return [{
+              id: article.url,
+              title: article.title,
+              url: article.url,
+              source: article.source || 'Sumber berita',
+              country: article.country || '',
+              publishedAt: publishedAt.toISOString(),
+            }];
+          });
+
           try {
-            const res = await fetch(apiUrl.toString(), {
-              signal: AbortSignal.timeout(10000),
-            });
-            if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
+            let articles: ReturnType<typeof normalizeArticles> = [];
+            let gdeltError: unknown;
 
-            const data = await res.json() as {
-              articles?: Array<{
-                url?: string;
-                title?: string;
-                seendate?: string;
-                domain?: string;
-                sourcecountry?: string;
-              }>;
-            };
-            const articles = (data.articles || []).flatMap(article => {
-              const date = article.seendate?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-              const topicalTitle = /\b(?:technology|tech|science|scientific|research|space|NASA|satellite|semiconductor|chip|artificial intelligence|AI|robot(?:ics)?|quantum|innovation|breakthrough|discovery|biotech|astronomy|physics|engineering|software|computer)\b/i;
-              if (!article.url || !article.title || !topicalTitle.test(article.title) || !date) return [];
+            try {
+              const res = await fetch(apiUrl.toString(), {
+                signal: AbortSignal.timeout(10000),
+              });
+              if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
 
-              try {
-                const articleUrl = new URL(article.url);
-                if (!['http:', 'https:'].includes(articleUrl.protocol)) return [];
-              } catch {
-                return [];
-              }
+              const data = await res.json() as {
+                articles?: Array<{
+                  url?: string;
+                  title?: string;
+                  seendate?: string;
+                  domain?: string;
+                  sourcecountry?: string;
+                }>;
+              };
+              articles = normalizeArticles((data.articles || []).map(article => {
+                const date = article.seendate?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+                return {
+                  url: article.url,
+                  title: article.title,
+                  publishedAt: date
+                    ? `${date[1]}-${date[2]}-${date[3]}T${date[4]}:${date[5]}:${date[6]}Z`
+                    : undefined,
+                  source: article.domain,
+                  country: article.sourcecountry,
+                };
+              }));
+            } catch (err) {
+              gdeltError = err;
+              console.warn('GDELT technology news unavailable; trying Google News RSS:', err);
+            }
 
-              return [{
-                id: article.url,
-                title: article.title,
-                url: article.url,
-                source: article.domain || 'Sumber berita',
-                country: article.sourcecountry || '',
-                publishedAt: `${date[1]}-${date[2]}-${date[3]}T${date[4]}:${date[5]}:${date[6]}Z`,
-              }];
-            });
+            if (articles.length === 0) {
+              const rssUrl = 'https://news.google.com/rss/search?q=technology+OR+science+OR+space+OR+semiconductor+when%3A1d&hl=en-US&gl=US&ceid=US:en';
+              const rssResponse = await fetch(rssUrl, {
+                headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+                signal: AbortSignal.timeout(10000),
+              });
+              if (!rssResponse.ok) throw new Error(`Google News RSS HTTP ${rssResponse.status}`);
+
+              const xml = await rssResponse.text();
+              const decodeXml = (value: string) => value
+                .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+                .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
+                .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+                .replace(/&(amp|lt|gt|quot|apos);/g, (_, entity: string) => ({
+                  amp: '&',
+                  lt: '<',
+                  gt: '>',
+                  quot: '"',
+                  apos: "'",
+                }[entity] || `&${entity};`));
+              const getTag = (item: string, tag: string) => {
+                const match = item.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+                return match ? decodeXml(match[1].trim()) : '';
+              };
+
+              articles = normalizeArticles(Array.from(xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi), match => {
+                const item = match[1];
+                return {
+                  url: getTag(item, 'link'),
+                  title: getTag(item, 'title'),
+                  publishedAt: getTag(item, 'pubDate'),
+                  source: getTag(item, 'source'),
+                };
+              }));
+            }
+
+            if (articles.length === 0 && gdeltError) throw gdeltError;
 
             const response = jsonResponse(articles, 200, {
               'Cache-Control': 'public, max-age=300',
@@ -838,7 +904,7 @@ export default {
             await cache.put(cacheKey, response.clone());
             return response;
           } catch (e: unknown) {
-            console.error('Failed to fetch technology and science news:', e);
+            console.error('Failed to fetch technology and science news from GDELT and Google News RSS:', e);
             return jsonResponse({ error: 'Feed berita sains dan teknologi sedang tidak tersedia.' }, 502);
           }
         }

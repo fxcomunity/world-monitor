@@ -247,11 +247,20 @@ VITE_EIA_KEY=your_eia_key
 psql -U your_user -d your_database -f database/schema.sql
 ```
 
-### 4. Run Development Server
+### 4. Run Development Servers
+Turnstile API berjalan di Cloudflare Worker. Jalankan Worker lokal dan Vite di dua terminal:
+
+Terminal pertama:
+```bash
+npm run worker:dev
+```
+
+Terminal kedua:
 ```bash
 npm run dev
 ```
-Buka `http://localhost:5173` di browser.
+
+Buka `http://localhost:5173` di browser. Vite mem-proxy `/api/*` ke Worker lokal di `http://localhost:8787`. Tambahkan secret Turnstile lokal ke `.dev.vars` seperti dijelaskan di bawah.
 
 ### 5. Build for Production
 ```bash
@@ -268,11 +277,11 @@ Create a Turnstile widget in the Cloudflare dashboard and add its keys to the Wo
 
 - Set `TURNSTILE_SITE_KEY` to the public site key in the Worker's environment variables.
 - Add `TURNSTILE_SECRET_KEY` as a Worker secret. From the `frontend` directory, run `npx wrangler secret put TURNSTILE_SECRET_KEY` and paste the secret key when prompted.
-- In Cloudflare, configure the site key under the Worker's **Settings → Variables and Secrets**. For local development, create the git-ignored `frontend/.dev.vars` file:
+- In Cloudflare, configure the site key under the Worker's **Settings → Variables and Secrets**. `TURNSTILE_SITE_KEY` sudah ada di `frontend/wrangler.toml`. Untuk Worker lokal, tambahkan secret ke file `frontend/.dev.vars` yang diabaikan Git:
   ```env
-  TURNSTILE_SITE_KEY=your_public_site_key
   TURNSTILE_SECRET_KEY=your_secret_key
   ```
+  Salin nilai Secret Key Turnstile dari dashboard Cloudflare ke file tersebut. `wrangler secret put` menyimpan secret untuk Worker remote dan tidak mengisi `.dev.vars` lokal. Tambahkan `localhost` ke daftar hostname yang diizinkan widget Turnstile untuk pengujian lokal.
 - Include the hostname serving the site in the Turnstile widget's allowed hostnames.
 
 The site displays the widget before rendering the app. The Worker validates its token with Cloudflare, then issues a signed, HTTP-only session cookie that allows API requests for 12 hours. The secret key must never be added to a `VITE_` variable or shipped to the browser.
