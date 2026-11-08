@@ -614,9 +614,6 @@ export async function fetchYouTubeLiveDisasters(query = 'earthquake natural disa
   const res = await fetch(`/api/youtube/live?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
   if (!res.ok) {
     const errorData = await res.json().catch(() => null) as { error?: string } | null;
-    if (res.status === 403 && errorData?.error === 'Verifikasi manusia diperlukan.') {
-      window.dispatchEvent(new Event('wm:turnstile-session-expired'));
-    }
     throw new Error(errorData?.error || `YouTube live API HTTP ${res.status}`);
   }
   const data = await res.json() as {

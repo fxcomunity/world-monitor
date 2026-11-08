@@ -19,7 +19,6 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import MaintenancePage from './pages/MaintenancePage';
 import NotFoundPage from './pages/NotFoundPage';
-import TurnstileGate from './components/TurnstileGate';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './index.css';
 
@@ -53,8 +52,4 @@ const router = createBrowserRouter([
   { path: '*', element: <NotFoundPage /> },
 ]);
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <TurnstileGate>
-    <RouterProvider router={router} />
-  </TurnstileGate>
-);
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<RouterProvider router={router} />);

@@ -14,5 +14,4 @@ not_found_handling = "single-page-application"
 
 [vars]
 ENVIRONMENT = "production"
-TURNSTILE_SITE_KEY = "0x4AAAAAAF3jfG-3c7sB1z1w"
 VITE_OPENSKY_CLIENT_ID = "sipalingjack-api-client"
