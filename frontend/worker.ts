@@ -87,9 +87,10 @@ async function callAIProvider(
   provider: string,
   prompt: string,
   systemPrompt: string,
-  keys: ReturnType<typeof getAIKeys>
+  keys: ReturnType<typeof getAIKeys>,
+  maxTokens = 1500,
 ): Promise<{ text: string; provider: string }> {
-  const signal = AbortSignal.timeout(12000); // 12 detik batas per provider
+  const signal = AbortSignal.timeout(12000);
 
   // 1. OpenRouter (Primary #1 — Gateway Global AI Terdepan)
   if (provider === 'openrouter' && keys.openrouter) {
@@ -108,7 +109,7 @@ async function callAIProvider(
           { role: 'user', content: prompt },
         ],
         temperature: 0.5,
-        max_tokens: 1500,
+        max_tokens: maxTokens,
       }),
       signal,
     });
@@ -123,15 +124,16 @@ async function callAIProvider(
     return { text, provider: 'OpenRouter (Primary AI)' };
   }
 
-  // 2. Google Gemini (2.0 Flash)
+  // 2. Google Gemini (3.5 Flash-Lite)
   if (provider === 'gemini' && keys.gemini) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keys.gemini}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${keys.gemini}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
       }),
       signal,
     });
@@ -143,7 +145,7 @@ async function callAIProvider(
     const data: any = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     if (!text) throw new Error('Gemini mengembalikan respons kosong');
-    return { text, provider: 'Google Gemini (2.0 Flash)' };
+    return { text, provider: 'Google Gemini (3.5 Flash-Lite)' };
   }
 
   // 3. DeepSeek (DeepSeek V3 / R1)
@@ -161,7 +163,7 @@ async function callAIProvider(
           { role: 'user', content: prompt },
         ],
         temperature: 0.5,
-        max_tokens: 1500,
+        max_tokens: maxTokens,
       }),
       signal,
     });
@@ -191,7 +193,7 @@ async function callAIProvider(
           { role: 'user', content: prompt },
         ],
         temperature: 0.5,
-        max_tokens: 1500,
+        max_tokens: maxTokens,
       }),
       signal,
     });
@@ -206,7 +208,7 @@ async function callAIProvider(
     return { text, provider: 'OpenAI (GPT-4o-mini)' };
   }
 
-  // 5. Groq (Backup #5 - Llama 3.3 70B Versatile)
+  // 5. Groq (Backup #5 - GPT OSS 20B)
   if (provider === 'groq' && keys.groq) {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -215,13 +217,13 @@ async function callAIProvider(
         Authorization: `Bearer ${keys.groq}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-20b',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
         ],
         temperature: 0.5,
-        max_tokens: 1500,
+        max_tokens: maxTokens,
       }),
       signal,
     });
@@ -233,7 +235,7 @@ async function callAIProvider(
     const data: any = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
     if (!text) throw new Error('Groq mengembalikan respons kosong');
-    return { text, provider: 'Groq (Llama 3.3 70B - Backup 5)' };
+    return { text, provider: 'Groq (GPT OSS 20B - Backup 5)' };
   }
 
   // 6. Mistral AI (Mistral Small Latest)
@@ -251,7 +253,7 @@ async function callAIProvider(
           { role: 'user', content: prompt },
         ],
         temperature: 0.5,
-        max_tokens: 1500,
+        max_tokens: maxTokens,
       }),
       signal,
     });
@@ -411,7 +413,7 @@ export default {
           }
 
           const keys = getAIKeys(env);
-          const providers = ['openrouter', 'gemini', 'deepseek', 'openai', 'groq', 'mistral']
+          const providers = ['gemini', 'openrouter', 'deepseek', 'openai', 'groq', 'mistral']
             .filter(provider => !!keys[provider as keyof typeof keys]);
           if (providers.length === 0) {
             return jsonResponse({ error: 'Layanan AI sedang belum tersedia.' }, 503);
@@ -432,7 +434,7 @@ export default {
 
           for (const provider of providers) {
             try {
-              const result = await callAIProvider(provider, prompt, systemPrompt, keys);
+              const result = await callAIProvider(provider, prompt, systemPrompt, keys, 256);
               return jsonResponse({ success: true, text: result.text });
             } catch (error) {
               console.warn(`[Website chat] Provider ${provider} gagal:`, (error as Error).message);
@@ -724,10 +726,10 @@ export default {
           const keys = getAIKeys(env);
           const available = [];
           if (keys.openrouter) available.push({ id: 'openrouter', name: 'OpenRouter (Primary AI Gateway)' });
-          if (keys.gemini) available.push({ id: 'gemini', name: 'Google Gemini 2.0 Flash' });
+          if (keys.gemini) available.push({ id: 'gemini', name: 'Google Gemini 3.5 Flash-Lite' });
           if (keys.deepseek) available.push({ id: 'deepseek', name: 'DeepSeek V3' });
           if (keys.openai) available.push({ id: 'openai', name: 'OpenAI (GPT-4o-mini)' });
-          if (keys.groq) available.push({ id: 'groq', name: 'Groq (Llama 3.3 70B - Backup 5)' });
+          if (keys.groq) available.push({ id: 'groq', name: 'Groq (GPT OSS 20B - Backup 5)' });
           if (keys.mistral) available.push({ id: 'mistral', name: 'Mistral AI' });
 
           return jsonResponse({ available });
