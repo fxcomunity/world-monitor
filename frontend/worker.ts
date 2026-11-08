@@ -89,6 +89,7 @@ async function callAIProvider(
   systemPrompt: string,
   keys: ReturnType<typeof getAIKeys>,
   maxTokens = 1500,
+  openRouterModel = 'deepseek/deepseek-chat',
 ): Promise<{ text: string; provider: string }> {
   const signal = AbortSignal.timeout(12000);
 
@@ -103,7 +104,7 @@ async function callAIProvider(
         'X-Title': 'World Monitor Intelligence',
       },
       body: JSON.stringify({
-        model: 'deepseek/deepseek-chat',
+        model: openRouterModel,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
@@ -115,13 +116,31 @@ async function callAIProvider(
     });
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 150)}`);
+      const error = `OpenRouter ${openRouterModel} HTTP ${res.status}: ${errText.slice(0, 150)}`;
+      if (openRouterModel !== 'openrouter/free' && [400, 402, 404, 429, 502, 503, 504].includes(res.status)) {
+        console.warn(`[AI failover] ${error}; mencoba openrouter/free.`);
+        return callAIProvider(provider, prompt, systemPrompt, keys, maxTokens, 'openrouter/free');
+      }
+      throw new Error(error);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
-    if (!text) throw new Error('OpenRouter mengembalikan respons kosong');
-    return { text, provider: 'OpenRouter (Primary AI)' };
+    if (!text) {
+      if (openRouterModel !== 'openrouter/free') {
+        console.warn(`[AI failover] OpenRouter ${openRouterModel} mengembalikan respons kosong; mencoba openrouter/free.`);
+        return callAIProvider(provider, prompt, systemPrompt, keys, maxTokens, 'openrouter/free');
+      }
+      throw new Error('OpenRouter openrouter/free mengembalikan respons kosong');
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const routedModel = typeof data.model === 'string' ? data.model : openRouterModel;
+    return {
+      text,
+      provider: openRouterModel === 'openrouter/free'
+        ? `OpenRouter Free (${routedModel})`
+        : `OpenRouter (${routedModel})`,
+    };
   }
 
   // 2. Google Gemini (3.5 Flash-Lite)
