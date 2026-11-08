@@ -71,9 +71,13 @@ export default function TurnstileGate({ children }: { children: React.ReactNode 
   const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessionCheckVersion, setSessionCheckVersion] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError(null);
+    setSiteKey(null);
 
     const initialize = async () => {
       try {
@@ -110,6 +114,18 @@ export default function TurnstileGate({ children }: { children: React.ReactNode 
     return () => {
       active = false;
     };
+  }, [sessionCheckVersion]);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setVerified(false);
+      setLoading(true);
+      setError(null);
+      setSessionCheckVersion(version => version + 1);
+    };
+
+    window.addEventListener('wm:turnstile-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('wm:turnstile-session-expired', handleSessionExpired);
   }, []);
 
   useEffect(() => {
