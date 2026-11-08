@@ -40,7 +40,7 @@
 | ⚡ **Energy Monitor** | Data energi EIA, intensitas karbon Electricity Maps |
 | 🛰️ **Transport Radar** | Pelacakan penerbangan OpenSky ADS-B, data kapal AISStream |
 | 🤖 **AI Multi-Provider** | Auto-failover: Groq > Gemini > DeepSeek > OpenAI > Mistral > OpenRouter |
-| 💬 **Website AI Chat** | Bantuan penggunaan World Monitor melalui Worker, sesi Turnstile, batas pesan, dan throttling |
+| 💬 **Website AI Chat** | Bantuan penggunaan World Monitor melalui Worker, batas pesan, dan throttling |
 | 🏴 **Country Intelligence** | Profil 19+ negara dengan flag emoji, skor stabilitas, dan analisis regional |
 | 📡 **Live Weather Radar** | Radar cuaca interaktif Windy dengan data Doppler global |
 | 🎥 **YouTube Live Streams** | Siaran bencana 24/7 via YouTube Data API v3 dengan filter topik |
@@ -256,7 +256,7 @@ Terminal pertama:
 npx wrangler dev --config frontend/wrangler.toml --inspector-port 0
 ```
 
-Wrangler membaca `frontend/.dev.vars`. Ganti placeholder `TURNSTILE_SECRET_KEY` dengan secret Turnstile asli. Tambahkan `EXPLOREID.test` dan `localhost` ke hostname yang diizinkan widget Turnstile untuk verifikasi lokal.
+Wrangler membaca `frontend/.dev.vars` untuk secret API Worker lokal.
 
 Jika menggunakan Vite (opsional), jalankan dari terminal kedua:
 ```bash
@@ -276,19 +276,8 @@ npm run build
 npm run deploy
 ```
 
-### 7. Protect the site with Cloudflare Turnstile
-Create a Turnstile widget in the Cloudflare dashboard and add its keys to the Worker:
-
-- Set `TURNSTILE_SITE_KEY` to the public site key in the Worker's environment variables.
-- Add `TURNSTILE_SECRET_KEY` as a Worker secret. From the `frontend` directory, run `npx wrangler secret put TURNSTILE_SECRET_KEY` and paste the secret key when prompted.
-- In Cloudflare, configure the site key under the Worker's **Settings → Variables and Secrets**. `TURNSTILE_SITE_KEY` sudah ada di `frontend/wrangler.toml`. Untuk Worker lokal, atur secret pada `frontend/.dev.vars` yang diabaikan Git:
-  ```env
-  TURNSTILE_SECRET_KEY=your_secret_key
-  ```
-  Salin nilai Secret Key Turnstile dari dashboard Cloudflare ke file tersebut. `wrangler secret put` menyimpan secret untuk Worker remote dan tidak mengisi `.dev.vars` lokal.
-- Include the production hostname and any local development hostnames in the Turnstile widget's allowed hostnames.
-
-The site displays the widget before rendering the app. The Worker validates its token with Cloudflare, then issues a signed, HTTP-only session cookie that allows API requests for 12 hours. The secret key must never be added to a `VITE_` variable or shipped to the browser.
+### 7. API access and rate limiting
+Turnstile verification is disabled. Public API endpoints can be called without a verification session. The AI chat endpoint still applies its application-level request limit; configure Cloudflare rate-limiting or WAF rules if additional protection is needed.
 
 ---
 
