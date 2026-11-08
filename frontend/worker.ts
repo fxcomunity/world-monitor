@@ -797,7 +797,7 @@ export default {
                 success: true,
                 text: result.text,
                 provider: result.provider,
-                fallbackOccurred: prov !== preferred,
+                fallbackOccurred: prov !== preferred || result.provider.startsWith('OpenRouter Free'),
                 attempts,
               });
             } catch (err: unknown) {
