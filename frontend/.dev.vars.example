@@ -1,1 +1,2 @@
 APIINDONESIA_KEY=isi_api_key_apiindonesia_di_sini
+DATABASE_URL=postgresql://user:password@your-neon-host.neon.tech/database?sslmode=require

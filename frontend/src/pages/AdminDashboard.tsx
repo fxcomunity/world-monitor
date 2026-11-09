@@ -8,6 +8,19 @@ import {
 } from 'lucide-react';
 import { isAdminAuthenticated, removeAdminCookie } from '../lib/auth';
 
+interface MaintenanceSettingsResponse {
+  active: boolean;
+  title: string;
+  message: string;
+  endTime: number;
+  durationHours: number;
+  contactEmail: string;
+  whatsappNumber: string;
+  logoType: string;
+  backgroundStyle: string;
+  glowColor: string;
+}
+
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'MAINTENANCE' | 'SECURITY' | 'PROFILE' | 'API_KEYS' | 'FEEDBACK'>('OVERVIEW');
 
@@ -25,7 +38,9 @@ export default function AdminDashboard() {
   const [maintenanceMode, setMaintenanceMode] = useState(() => localStorage.getItem('wm_maintenance_mode') === 'true');
   const [maintenanceTitle, setMaintenanceTitle] = useState(() => localStorage.getItem('wm_maintenance_title') || 'Lagi Maintenance');
   const [maintenanceMessage, setMaintenanceMessage] = useState(() => localStorage.getItem('wm_maintenance_msg') || 'Kami lagi upgrade sistem telemetri & keamanan biar makin kenceng dan stabil. Bentar lagi balik kok!');
-  const [maintenanceDurationHours, setMaintenanceDurationHours] = useState('2');
+  const [maintenanceDurationHours, setMaintenanceDurationHours] = useState(
+    () => localStorage.getItem('wm_maintenance_duration_hours') || '2',
+  );
   const [maintenanceTheme, setMaintenanceTheme] = useState(() => localStorage.getItem('wm_maintenance_theme') || 'CYBER_DARK');
   const [maintenanceContact, setMaintenanceContact] = useState(() => localStorage.getItem('wm_maintenance_contact') || 'admin@jack-ai.my.id');
   const [maintenanceWhatsapp, setMaintenanceWhatsapp] = useState(() => localStorage.getItem('wm_maintenance_wa') || '+62 812-3456-7890');
@@ -33,6 +48,8 @@ export default function AdminDashboard() {
   const [maintenanceBgColor, setMaintenanceBgColor] = useState(() => localStorage.getItem('wm_maintenance_bg') || '#030816');
   const [maintenanceGlowColor, setMaintenanceGlowColor] = useState(() => localStorage.getItem('wm_maintenance_glow') || '#00e5ff');
   const [maintenanceSaveMsg, setMaintenanceSaveMsg] = useState('');
+  const [maintenanceSaveError, setMaintenanceSaveError] = useState('');
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
 
   const [ddosThreshold, setDdosThreshold] = useState('100 req/min');
   const [logs, setLogs] = useState([
@@ -46,6 +63,65 @@ export default function AdminDashboard() {
     if (!isAdminAuthenticated()) {
       window.location.href = '/auth/admin';
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMaintenanceSettings = async () => {
+      try {
+        const response = await fetch('/api/maintenance', { cache: 'no-store' });
+        const data = await response.json() as {
+          active?: boolean;
+          title?: string;
+          message?: string;
+          endTime?: number;
+          durationHours?: number;
+          contactEmail?: string;
+          whatsappNumber?: string;
+          logoType?: string;
+          backgroundStyle?: string;
+          glowColor?: string;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(data.error || 'Gagal memuat pengaturan maintenance dari database.');
+        if (cancelled) return;
+
+        setMaintenanceMode(data.active === true);
+        if (data.title !== undefined) setMaintenanceTitle(data.title);
+        if (data.message !== undefined) setMaintenanceMessage(data.message);
+        if (data.durationHours !== undefined) setMaintenanceDurationHours(String(data.durationHours));
+        if (data.contactEmail !== undefined) setMaintenanceContact(data.contactEmail);
+        if (data.whatsappNumber !== undefined) setMaintenanceWhatsapp(data.whatsappNumber);
+        if (data.logoType !== undefined) setMaintenanceLogoType(data.logoType);
+        if (data.backgroundStyle !== undefined) setMaintenanceBgColor(data.backgroundStyle);
+        if (data.glowColor !== undefined) setMaintenanceGlowColor(data.glowColor);
+
+        localStorage.setItem('wm_maintenance_mode', String(data.active === true));
+        if (data.title !== undefined) localStorage.setItem('wm_maintenance_title', data.title);
+        if (data.message !== undefined) localStorage.setItem('wm_maintenance_msg', data.message);
+        if (data.endTime !== undefined) localStorage.setItem('wm_maintenance_end', String(data.endTime));
+        if (data.durationHours !== undefined) {
+          localStorage.setItem('wm_maintenance_duration_hours', String(data.durationHours));
+        }
+        if (data.contactEmail !== undefined) localStorage.setItem('wm_maintenance_contact', data.contactEmail);
+        if (data.whatsappNumber !== undefined) localStorage.setItem('wm_maintenance_wa', data.whatsappNumber);
+        if (data.logoType !== undefined) localStorage.setItem('wm_maintenance_logo', data.logoType);
+        if (data.backgroundStyle !== undefined) localStorage.setItem('wm_maintenance_bg', data.backgroundStyle);
+        if (data.glowColor !== undefined) localStorage.setItem('wm_maintenance_glow', data.glowColor);
+      } catch (error) {
+        if (!cancelled) {
+          setMaintenanceSaveError(
+            error instanceof Error ? error.message : 'Gagal memuat pengaturan maintenance.',
+          );
+        }
+      }
+    };
+
+    loadMaintenanceSettings();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Feedback State
@@ -108,25 +184,18 @@ export default function AdminDashboard() {
   // Toggle Maintenance & Simpan Kustomisasi Tampilan Maintenance
   const handleSaveMaintenanceSettings = async (modeToggle?: boolean) => {
     const nextMode = modeToggle !== undefined ? modeToggle : maintenanceMode;
-    if (modeToggle !== undefined) {
-      setMaintenanceMode(nextMode);
+    const durationHours = Number.parseFloat(maintenanceDurationHours);
+    if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 720) {
+      setMaintenanceSaveError('Durasi harus lebih dari 0 dan maksimal 720 jam.');
+      return;
     }
+    const targetEnd = Date.now() + durationHours * 60 * 60 * 1000;
+    setMaintenanceSaving(true);
+    setMaintenanceSaveMsg('');
+    setMaintenanceSaveError('');
 
-    const targetEnd = Date.now() + (parseFloat(maintenanceDurationHours) || 2) * 60 * 60 * 1000;
-    localStorage.setItem('wm_maintenance_mode', String(nextMode));
-    localStorage.setItem('wm_maintenance_title', maintenanceTitle);
-    localStorage.setItem('wm_maintenance_msg', maintenanceMessage);
-    localStorage.setItem('wm_maintenance_theme', maintenanceTheme);
-    localStorage.setItem('wm_maintenance_contact', maintenanceContact);
-    localStorage.setItem('wm_maintenance_wa', maintenanceWhatsapp);
-    localStorage.setItem('wm_maintenance_logo', maintenanceLogoType);
-    localStorage.setItem('wm_maintenance_bg', maintenanceBgColor);
-    localStorage.setItem('wm_maintenance_glow', maintenanceGlowColor);
-    localStorage.setItem('wm_maintenance_end', String(targetEnd));
-
-    // Broadcast ke server Cloudflare Worker
     try {
-      await fetch('/api/maintenance', {
+      const response = await fetch('/api/maintenance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -134,18 +203,53 @@ export default function AdminDashboard() {
           title: maintenanceTitle,
           message: maintenanceMessage,
           endTime: targetEnd,
+          durationHours,
           contactEmail: maintenanceContact,
           whatsappNumber: maintenanceWhatsapp,
           logoType: maintenanceLogoType,
           backgroundStyle: maintenanceBgColor,
+          glowColor: maintenanceGlowColor,
         }),
       });
-    } catch {
-      // Local fallback
-    }
+      const result = await response.json() as {
+        success?: boolean;
+        status?: MaintenanceSettingsResponse;
+        error?: string;
+      };
+      if (!response.ok || !result.success || !result.status) {
+        throw new Error(result.error || 'Pengaturan maintenance gagal disimpan ke database.');
+      }
 
-    setMaintenanceSaveMsg('Pengaturan, logo, warna background & kontak WhatsApp berhasil disimpan!');
-    setTimeout(() => setMaintenanceSaveMsg(''), 4000);
+      const saved = result.status;
+      setMaintenanceMode(saved.active);
+      setMaintenanceTitle(saved.title);
+      setMaintenanceMessage(saved.message);
+      setMaintenanceDurationHours(String(saved.durationHours));
+      setMaintenanceContact(saved.contactEmail);
+      setMaintenanceWhatsapp(saved.whatsappNumber);
+      setMaintenanceLogoType(saved.logoType);
+      setMaintenanceBgColor(saved.backgroundStyle);
+      setMaintenanceGlowColor(saved.glowColor);
+      localStorage.setItem('wm_maintenance_mode', String(saved.active));
+      localStorage.setItem('wm_maintenance_title', saved.title);
+      localStorage.setItem('wm_maintenance_msg', saved.message);
+      localStorage.setItem('wm_maintenance_theme', maintenanceTheme);
+      localStorage.setItem('wm_maintenance_contact', saved.contactEmail);
+      localStorage.setItem('wm_maintenance_wa', saved.whatsappNumber);
+      localStorage.setItem('wm_maintenance_logo', saved.logoType);
+      localStorage.setItem('wm_maintenance_bg', saved.backgroundStyle);
+      localStorage.setItem('wm_maintenance_glow', saved.glowColor);
+      localStorage.setItem('wm_maintenance_end', String(saved.endTime));
+      localStorage.setItem('wm_maintenance_duration_hours', String(saved.durationHours));
+      setMaintenanceSaveMsg('Pengaturan maintenance berhasil disimpan ke database.');
+      setTimeout(() => setMaintenanceSaveMsg(''), 4000);
+    } catch (error) {
+      setMaintenanceSaveError(
+        error instanceof Error ? error.message : 'Pengaturan maintenance gagal disimpan.',
+      );
+    } finally {
+      setMaintenanceSaving(false);
+    }
   };
 
   const handleSimulateBlock = () => {
@@ -369,6 +473,12 @@ export default function AdminDashboard() {
                   <span>{maintenanceSaveMsg}</span>
                 </div>
               )}
+              {maintenanceSaveError && (
+                <div className="p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{maintenanceSaveError}</span>
+                </div>
+              )}
 
               {/* Toggle Switch */}
               <div className="p-3.5 rounded-lg bg-black/40 border border-cyan-950 flex items-center justify-between">
@@ -380,8 +490,9 @@ export default function AdminDashboard() {
                 </div>
                 <button
                   type="button"
+                  disabled={maintenanceSaving}
                   onClick={() => handleSaveMaintenanceSettings(!maintenanceMode)}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait ${
                     maintenanceMode
                       ? 'bg-red-600 text-white shadow-lg shadow-red-950'
                       : 'bg-emerald-600 text-white shadow-lg shadow-emerald-950'
@@ -413,6 +524,19 @@ export default function AdminDashboard() {
                     onChange={e => setMaintenanceMessage(e.target.value)}
                     placeholder="Tulis alasan maintenance..."
                     className="w-full px-3 py-2 rounded-lg bg-black/50 border border-cyan-900/50 text-xs text-gray-200 focus:outline-none focus:border-cyan-400 resize-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] text-gray-400 uppercase">Estimasi Durasi Maintenance (jam):</label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="720"
+                    step="0.1"
+                    value={maintenanceDurationHours}
+                    onChange={e => setMaintenanceDurationHours(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-black/50 border border-cyan-900/50 text-xs text-cyan-300 focus:outline-none focus:border-cyan-400"
                   />
                 </div>
 
@@ -499,11 +623,12 @@ export default function AdminDashboard() {
 
                 <button
                   type="button"
+                  disabled={maintenanceSaving}
                   onClick={() => handleSaveMaintenanceSettings()}
-                  className="w-full py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs tracking-wide transition flex items-center justify-center gap-2 mt-2 shadow-lg shadow-cyan-950/50"
+                  className="w-full py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs tracking-wide transition flex items-center justify-center gap-2 mt-2 shadow-lg shadow-cyan-950/50 disabled:opacity-50 disabled:cursor-wait"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Simpan Perubahan Tampilan Maintenance</span>
+                  <span>{maintenanceSaving ? 'Menyimpan...' : 'Simpan Perubahan Tampilan Maintenance'}</span>
                 </button>
               </div>
             </div>

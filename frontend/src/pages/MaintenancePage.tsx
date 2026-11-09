@@ -10,7 +10,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 export default function MaintenancePage() {
   const [targetEnd, setTargetEnd] = useState(() => {
     const saved = localStorage.getItem('wm_maintenance_end');
-    return saved ? parseInt(saved, 10) : Date.now() + 2 * 60 * 60 * 1000;
+    return Number.isFinite(Number(saved)) ? Number(saved) : Date.now() + 2 * 60 * 60 * 1000;
   });
   const [customTitle, setCustomTitle] = useState(() => localStorage.getItem('wm_maintenance_title') || 'Lagi Maintenance');
   const [customMessage, setCustomMessage] = useState(() => localStorage.getItem('wm_maintenance_msg') || 'Kami lagi upgrade sistem telemetri & keamanan biar makin kenceng dan stabil. Bentar lagi balik kok!');
@@ -52,13 +52,18 @@ export default function MaintenancePage() {
 
         if (data.title) setCustomTitle(data.title);
         if (data.message) setCustomMessage(data.message);
-        if (data.endTime) setTargetEnd(data.endTime);
+        if (Number.isFinite(Number(data.endTime)) && Number(data.endTime) > 0) {
+          const nextEndTime = Number(data.endTime);
+          setTargetEnd(nextEndTime);
+          localStorage.setItem('wm_maintenance_end', String(nextEndTime));
+        }
         if (data.contactEmail) setContactEmail(data.contactEmail);
         if (data.whatsappNumber) setWhatsappNumber(data.whatsappNumber);
         if (data.logoType) setLogoType(data.logoType);
         if (data.backgroundStyle) {
           setBgColor(data.backgroundStyle);
-          if (data.backgroundStyle.includes('#061426')) setGlowColor('#0284c7');
+          if (data.glowColor) setGlowColor(data.glowColor);
+          else if (data.backgroundStyle.includes('#061426')) setGlowColor('#0284c7');
           else if (data.backgroundStyle.includes('#160628')) setGlowColor('#a855f7');
           else if (data.backgroundStyle.includes('#240608')) setGlowColor('#ef4444');
           else if (data.backgroundStyle.includes('#022416')) setGlowColor('#10b981');

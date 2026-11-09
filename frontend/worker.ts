@@ -3,6 +3,8 @@
  * Handles Edge API Gateway, Security Proxy, AI Multi-Provider Router (Auto-Failover), and Asset Serving.
  */
 
+import { neon } from '@neondatabase/serverless';
+
 interface Env {
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
@@ -49,6 +51,7 @@ interface Env {
   // Admin Auth
   ADMIN_USER?: string;
   ADMIN_PASS?: string;
+  DATABASE_URL?: string;
 }
 
 const CHAT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -329,25 +332,58 @@ async function callAIProvider(
   throw new Error(`Key untuk provider "${provider}" belum tersedia atau tidak aktif`);
 }
 
-let GLOBAL_MAINTENANCE: {
+interface MaintenanceSettings {
   active: boolean;
   title: string;
   message: string;
   endTime: number;
-  contactEmail?: string;
-  whatsappNumber?: string;
-  logoType?: string; // 'WRENCH' | 'SHIELD' | 'ALERT' | 'SERVER'
-  backgroundStyle?: string; // 'CYBER_DARK' | 'MIDNIGHT_BLUE' | 'NEON_PURPLE' | 'CRIMSON_RED' | 'DEEP_EMERALD'
-} = {
-  active: false,
-  title: 'Lagi Maintenance',
-  message: 'Kami lagi upgrade sistem biar makin kenceng & aman. Bentar lagi balik kok.',
-  endTime: Date.now() + 2 * 60 * 60 * 1000,
-  contactEmail: 'admin@jack-ai.my.id',
-  whatsappNumber: '+62 812-3456-7890',
-  logoType: 'SHIELD',
-  backgroundStyle: 'CYBER_DARK',
-};
+  durationHours: number;
+  contactEmail: string;
+  whatsappNumber: string;
+  logoType: string;
+  backgroundStyle: string;
+  glowColor: string;
+}
+
+async function getMaintenanceSettings(env: Env): Promise<MaintenanceSettings> {
+  if (!env.DATABASE_URL) {
+    throw new Error('DATABASE_URL belum dikonfigurasi pada Cloudflare Worker.');
+  }
+
+  const sql = neon(env.DATABASE_URL);
+  const rows = await sql`
+    SELECT
+      active,
+      title,
+      message,
+      end_time AS "endTime",
+      duration_hours AS "durationHours",
+      contact_email AS "contactEmail",
+      whatsapp_number AS "whatsappNumber",
+      logo_type AS "logoType",
+      background_style AS "backgroundStyle",
+      glow_color AS "glowColor"
+    FROM maintenance_settings
+    WHERE id = 'global'
+  ` as Array<Record<string, unknown>>;
+  const row = rows[0];
+  if (!row) {
+    throw new Error('Pengaturan maintenance belum ada. Jalankan database/maintenance.sql terlebih dahulu.');
+  }
+
+  return {
+    active: row.active === true,
+    title: String(row.title),
+    message: String(row.message),
+    endTime: Number(row.endTime),
+    durationHours: Number(row.durationHours),
+    contactEmail: String(row.contactEmail),
+    whatsappNumber: String(row.whatsappNumber),
+    logoType: String(row.logoType),
+    backgroundStyle: String(row.backgroundStyle),
+    glowColor: String(row.glowColor),
+  };
+}
 
 // ─── FITUR SUKA & RATING BINTANG 1-5 DENGAN ID UNIK PERANGKAT KONSISTEN ───
 interface FeedbackItem {
@@ -562,29 +598,105 @@ export default {
 
         // [GET] /api/maintenance — Ambil status maintenance sistem secara live
         if (url.pathname === '/api/maintenance' && request.method === 'GET') {
-          return jsonResponse({
-            ...GLOBAL_MAINTENANCE,
-            serverTime: Date.now(),
-          });
+          try {
+            return jsonResponse({
+              ...await getMaintenanceSettings(env),
+              serverTime: Date.now(),
+            }, 200, { 'Cache-Control': 'no-store' });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`Maintenance settings unavailable: ${message}`);
+            return jsonResponse({ error: message }, 503, { 'Cache-Control': 'no-store' });
+          }
         }
 
         // [POST] /api/maintenance — Update status maintenance oleh Admin
         if (url.pathname === '/api/maintenance' && request.method === 'POST') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const body: any = await request.json().catch(() => ({}));
-          GLOBAL_MAINTENANCE.active = Boolean(body.active);
-          if (body.title) GLOBAL_MAINTENANCE.title = String(body.title).slice(0, 100);
-          if (body.message) GLOBAL_MAINTENANCE.message = String(body.message).slice(0, 500);
-          if (body.endTime) GLOBAL_MAINTENANCE.endTime = Number(body.endTime);
-          if (body.contactEmail) GLOBAL_MAINTENANCE.contactEmail = String(body.contactEmail);
-          if (body.whatsappNumber !== undefined) GLOBAL_MAINTENANCE.whatsappNumber = String(body.whatsappNumber);
-          if (body.logoType) GLOBAL_MAINTENANCE.logoType = String(body.logoType);
-          if (body.backgroundStyle) GLOBAL_MAINTENANCE.backgroundStyle = String(body.backgroundStyle);
+          let body: Record<string, unknown>;
+          try {
+            const parsed: unknown = await request.json();
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              return jsonResponse({ error: 'Format pengaturan maintenance tidak valid.' }, 400);
+            }
+            body = parsed as Record<string, unknown>;
+          } catch {
+            return jsonResponse({ error: 'Format JSON tidak valid.' }, 400);
+          }
 
-          return jsonResponse({
-            success: true,
-            status: GLOBAL_MAINTENANCE,
-          });
+          if (typeof body.active !== 'boolean') {
+            return jsonResponse({ error: 'Status maintenance harus berupa boolean.' }, 400);
+          }
+
+          try {
+            const databaseUrl = env.DATABASE_URL;
+            if (!databaseUrl) throw new Error('DATABASE_URL belum dikonfigurasi pada Cloudflare Worker.');
+            const current = await getMaintenanceSettings(env);
+            const durationHours = body.durationHours === undefined
+              ? current.durationHours
+              : Number(body.durationHours);
+            if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 720) {
+              return jsonResponse({ error: 'Durasi maintenance harus lebih dari 0 dan maksimal 720 jam.' }, 400);
+            }
+
+            const requestedEndTime = body.endTime === undefined ? Number.NaN : Number(body.endTime);
+            if (body.endTime !== undefined && (!Number.isFinite(requestedEndTime) || requestedEndTime <= 0)) {
+              return jsonResponse({ error: 'Waktu selesai maintenance tidak valid.' }, 400);
+            }
+
+            const settings: MaintenanceSettings = {
+              active: body.active,
+              title: body.title === undefined ? current.title : String(body.title).trim().slice(0, 100),
+              message: body.message === undefined ? current.message : String(body.message).trim().slice(0, 500),
+              endTime: Number.isFinite(requestedEndTime)
+                ? requestedEndTime
+                : body.active && !current.active
+                  ? Date.now() + durationHours * 60 * 60 * 1000
+                  : current.endTime,
+              durationHours,
+              contactEmail: body.contactEmail === undefined
+                ? current.contactEmail
+                : String(body.contactEmail).trim().slice(0, 254),
+              whatsappNumber: body.whatsappNumber === undefined
+                ? current.whatsappNumber
+                : String(body.whatsappNumber).trim().slice(0, 40),
+              logoType: body.logoType === undefined ? current.logoType : String(body.logoType).slice(0, 20),
+              backgroundStyle: body.backgroundStyle === undefined
+                ? current.backgroundStyle
+                : String(body.backgroundStyle).slice(0, 40),
+              glowColor: body.glowColor === undefined ? current.glowColor : String(body.glowColor).slice(0, 40),
+            };
+
+            const sql = neon(databaseUrl);
+            await sql`
+              INSERT INTO maintenance_settings (
+                id, active, title, message, end_time, duration_hours,
+                contact_email, whatsapp_number, logo_type, background_style, glow_color, updated_at
+              ) VALUES (
+                'global', ${settings.active}, ${settings.title}, ${settings.message},
+                ${settings.endTime}, ${settings.durationHours}, ${settings.contactEmail},
+                ${settings.whatsappNumber}, ${settings.logoType}, ${settings.backgroundStyle},
+                ${settings.glowColor}, NOW()
+              )
+              ON CONFLICT (id) DO UPDATE SET
+                active = EXCLUDED.active,
+                title = EXCLUDED.title,
+                message = EXCLUDED.message,
+                end_time = EXCLUDED.end_time,
+                duration_hours = EXCLUDED.duration_hours,
+                contact_email = EXCLUDED.contact_email,
+                whatsapp_number = EXCLUDED.whatsapp_number,
+                logo_type = EXCLUDED.logo_type,
+                background_style = EXCLUDED.background_style,
+                glow_color = EXCLUDED.glow_color,
+                updated_at = NOW()
+            `;
+
+            return jsonResponse({ success: true, status: settings }, 200, { 'Cache-Control': 'no-store' });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`Unable to save maintenance settings: ${message}`);
+            return jsonResponse({ error: message }, 503, { 'Cache-Control': 'no-store' });
+          }
         }
 
         // [GET] /api/feedback — Ambil ringkasan suka (bintang 1-5), daftar ulasan, dan identitas unik perangkat (1 HP 1 ID)

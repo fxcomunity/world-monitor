@@ -10,6 +10,7 @@
     "worker:dev": "vite build && wrangler dev"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "@radix-ui/react-icons": "^1.3.0",
     "@types/three": "^0.187.0",
     "globe.gl": "^2.46.2",

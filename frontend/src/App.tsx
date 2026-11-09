@@ -21,12 +21,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let checking = false;
+
     const checkMaintenance = async () => {
+      if (checking) return;
       const isAdmin = isAdminAuthenticated();
       if (isAdmin || location.pathname.startsWith('/auth/admin') || location.pathname === '/maintenance') {
         return;
       }
 
+      checking = true;
       // 1. Cek local storage dulu
       let isMaint = localStorage.getItem('wm_maintenance_mode') === 'true';
 
@@ -41,10 +45,20 @@ export default function App() {
             if (data.title) localStorage.setItem('wm_maintenance_title', data.title);
             if (data.message) localStorage.setItem('wm_maintenance_msg', data.message);
             if (data.endTime) localStorage.setItem('wm_maintenance_end', String(data.endTime));
+            if (data.durationHours) {
+              localStorage.setItem('wm_maintenance_duration_hours', String(data.durationHours));
+            }
+            if (data.contactEmail) localStorage.setItem('wm_maintenance_contact', data.contactEmail);
+            if (data.whatsappNumber) localStorage.setItem('wm_maintenance_wa', data.whatsappNumber);
+            if (data.logoType) localStorage.setItem('wm_maintenance_logo', data.logoType);
+            if (data.backgroundStyle) localStorage.setItem('wm_maintenance_bg', data.backgroundStyle);
+            if (data.glowColor) localStorage.setItem('wm_maintenance_glow', data.glowColor);
           }
         }
       } catch {
         // network fallback
+      } finally {
+        checking = false;
       }
 
       // Jika maintenance aktif, langsung tendang ke halaman /maintenance
@@ -54,6 +68,8 @@ export default function App() {
     };
 
     checkMaintenance();
+    const intervalId = window.setInterval(checkMaintenance, 15_000);
+    return () => window.clearInterval(intervalId);
   }, [location.pathname, navigate]);
 
   return (

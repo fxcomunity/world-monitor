@@ -188,7 +188,7 @@ Panel administrasi terpisah (tanpa sidebar monitoring) yang hanya bisa diakses v
 
 ## 🗄️ Database Schema
 
-File schema PostgreSQL tersedia di [`database/schema.sql`](./database/schema.sql).
+File schema PostgreSQL tersedia di [`database/schema.sql`](./database/schema.sql). Pengaturan maintenance persisten disiapkan lewat [`database/maintenance.sql`](./database/maintenance.sql).
 
 ### Tabel
 
@@ -196,14 +196,16 @@ File schema PostgreSQL tersedia di [`database/schema.sql`](./database/schema.sql
 |:------|:----------|
 | `devices` | Registrasi perangkat unik (1 HP = 1 ID). Fingerprint hash, tipe perangkat, IP, screen resolution |
 | `user_ratings` | Rating bintang 1-5 dan komentar anonim. FK ke `devices.device_id`, 1 rating per perangkat |
+| `maintenance_settings` | Status maintenance, teks, tema, durasi, dan waktu selesai yang dipakai bersama oleh semua instance Worker |
 
 ### Setup Database
 ```sql
 -- Jalankan schema di PostgreSQL
 psql -U your_user -d your_database -f database/schema.sql
+psql -U your_user -d your_database -f database/maintenance.sql
 ```
 
-> **Catatan:** File schema hanya berisi struktur tabel dan query template (dalam komentar). Tidak ada data sample. Isi data melalui aplikasi atau insert manual.
+Worker menggunakan Neon serverless PostgreSQL driver. Isi `DATABASE_URL` hanya sebagai secret Worker (`frontend/.dev.vars` untuk lokal dan `npx wrangler secret put DATABASE_URL` untuk production); jangan menaruhnya di kode frontend atau variabel `VITE_*`.
 
 ---
 
@@ -247,7 +249,10 @@ VITE_EIA_KEY=your_eia_key
 ### 3. Setup Database (Opsional)
 ```bash
 psql -U your_user -d your_database -f database/schema.sql
+psql -U your_user -d your_database -f database/maintenance.sql
 ```
+
+Untuk Neon, jalankan perintah `psql` terhadap database yang sama dengan `DATABASE_URL`. Salin `frontend/.dev.vars.example` menjadi `frontend/.dev.vars` dan isi `DATABASE_URL` untuk menjalankan Worker lokal. Untuk production, dari folder `frontend` jalankan `npx wrangler secret put DATABASE_URL` lalu masukkan connection string Neon ketika diminta. Maintenance tidak memakai fallback localStorage sebagai sumber kebenaran; Worker akan mengembalikan error jika secret atau tabel belum disiapkan.
 
 ### 4. Run Local Development Servers
 Jalankan dari folder `frontend`:
