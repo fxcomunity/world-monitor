@@ -13,6 +13,7 @@ import {
   fetchYouTubeDisasterNews,
   YouTubeLiveItem
 } from '../lib/api';
+import { ListSkeleton, ValueSkeleton } from '../components/MonitorSkeleton';
 
 interface DisasterEvent {
   id: string;
@@ -433,11 +434,11 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
           <div className="space-y-2 overflow-y-auto max-h-[380px] pr-1 overscroll-contain">
             {videoTab === 'LIVE' ? (
               liveVideos.length === 0 ? (
-                <div className="text-center py-10 text-gray-500 text-xs font-mono">
-                  {loadingYt
-                    ? 'Memeriksa siaran aktif...'
-                    : liveError || 'Tidak ada siaran langsung aktif saat ini.'}
-                </div>
+                loadingYt ? <ListSkeleton rows={3} /> : (
+                  <div className="text-center py-10 text-gray-500 text-xs font-mono">
+                    {liveError || 'Tidak ada siaran langsung aktif saat ini.'}
+                  </div>
+                )
               ) : (
                 liveVideos.map(v => {
                   const videoId = v.id;
@@ -496,9 +497,11 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
               )
             ) : (
               newsVideos.length === 0 ? (
-                <div className="text-center py-10 text-gray-500 text-xs font-mono">
-                  Memuat berita video bencana...
-                </div>
+                loadingYt ? <ListSkeleton rows={3} /> : (
+                  <div className="text-center py-10 text-gray-500 text-xs font-mono">
+                    Belum ada berita video bencana untuk ditampilkan.
+                  </div>
+                )
               ) : (
                 newsVideos.map(n => {
                   const isSelected = feedMode === 'YOUTUBE' && activeStream?.id === n.id;
@@ -611,7 +614,7 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
                     </div>
                   </div>
                 ))}
-                {filteredQuakes.length === 0 && (
+                {filteredQuakes.length === 0 && loading ? <ListSkeleton rows={3} /> : filteredQuakes.length === 0 && (
                   <div className="text-center py-4 text-gray-500 text-[10px] font-mono">Tidak ada data gempa</div>
                 )}
               </div>
@@ -621,35 +624,35 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
       </div>
 
       {/* ─── MID SECTION: STATS COUNTERS ─── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-        <div className="p-3 sm:p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <div className="min-w-0 p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#251519] to-[#081226] border border-red-900/40 shadow-lg transition hover:border-red-700/60">
           <div className="text-[11px] font-mono text-gray-400">GEMPA AKTIF (USGS)</div>
           <div className="text-xl sm:text-2xl font-bold text-red-400 font-mono mt-1 flex items-center justify-between">
-            {quakes.length}
+            {loading && quakes.length === 0 ? <ValueSkeleton /> : quakes.length}
             <Activity className="w-5 h-5 text-red-500/50" />
           </div>
           <div className="text-[10px] text-gray-500 mt-1">7 hari terakhir (M4.5+)</div>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#251a14] to-[#081226] border border-orange-900/40 shadow-lg transition hover:border-orange-700/60">
           <div className="text-[11px] font-mono text-gray-400">BENCANA AKTIF (NASA)</div>
           <div className="text-xl sm:text-2xl font-bold text-orange-400 font-mono mt-1 flex items-center justify-between">
-            {disasters.length}
+            {loading && disasters.length === 0 ? <ValueSkeleton /> : disasters.length}
             <Flame className="w-5 h-5 text-orange-500/50" />
           </div>
           <div className="text-[10px] text-gray-500 mt-1">EONET v3 real-time</div>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#25220f] to-[#081226] border border-yellow-900/40 shadow-lg transition hover:border-yellow-700/60">
           <div className="text-[11px] font-mono text-gray-400">GEMPA TERBESAR</div>
           <div className="text-xl sm:text-2xl font-bold text-yellow-400 font-mono mt-1 flex items-center justify-between">
-            M {quakes[0]?.magnitude.toFixed(1) || '0.0'}
+            {loading && quakes.length === 0 ? <ValueSkeleton /> : `M ${quakes[0]?.magnitude.toFixed(1) || '0.0'}`}
             <AlertTriangle className="w-5 h-5 text-yellow-500/50" />
           </div>
           <div className="text-[10px] text-gray-500 mt-1 truncate">{quakes[0]?.place || 'Belum ada data'}</div>
         </div>
 
-        <div className="p-3 sm:p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0b2420] to-[#081226] border border-emerald-900/40 shadow-lg transition hover:border-emerald-700/60">
           <div className="text-[11px] font-mono text-gray-400">STATUS MONITOR</div>
           <div className="text-xl sm:text-2xl font-bold text-emerald-400 font-mono mt-1 flex items-center justify-between">
             ONLINE
@@ -689,7 +692,9 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
           </div>
 
           <div className="flex-1 overflow-y-auto max-h-[420px] space-y-2 pr-1 overscroll-contain">
-            {filteredQuakes.length === 0 ? (
+            {loading && quakes.length === 0 ? (
+              <ListSkeleton rows={6} />
+            ) : filteredQuakes.length === 0 ? (
               <div className="text-center py-12 text-gray-500 text-xs font-mono">
                 Tidak ada gempa M{minMagnitude}+ dalam database periode ini.
               </div>
@@ -762,7 +767,9 @@ Instruksi: Berikan ringkasan situasi darurat bencana global saat ini (Situationa
           </div>
 
           <div className="flex-1 overflow-y-auto max-h-[420px] space-y-2 pr-1 overscroll-contain">
-            {filteredDisasters.length === 0 ? (
+            {loading && disasters.length === 0 ? (
+              <ListSkeleton rows={6} />
+            ) : filteredDisasters.length === 0 ? (
               <div className="text-center py-12 text-gray-500 text-xs font-mono">
                 Tidak ada data bencana untuk kategori ini.
               </div>

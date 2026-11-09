@@ -16,6 +16,7 @@ const GRID_ZONES = [
 
 export default function EnergyMonitor() {
   const [loading, setLoading] = useState(true);
+  const [commoditiesLoading, setCommoditiesLoading] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [commodities, setCommodities] = useState<any[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,12 +25,7 @@ export default function EnergyMonitor() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [comms, eia] = await Promise.all([
-        fetchLiveCommodities(),
-        fetchEnergyData(),
-      ]);
-      setCommodities(comms);
-      setEiaData(eia);
+      setEiaData(await fetchEnergyData());
     } catch (e) {
       console.error('Failed to load energy data:', e);
     } finally {
@@ -37,8 +33,22 @@ export default function EnergyMonitor() {
     }
   };
 
+  const refreshCommodities = async () => {
+    try {
+      setCommodities(await fetchLiveCommodities());
+    } catch (error) {
+      setCommodities([]);
+      console.error('Failed to refresh energy commodity quotes:', error);
+    } finally {
+      setCommoditiesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    refreshCommodities();
+    const interval = window.setInterval(refreshCommodities, 60 * 1000);
+    return () => window.clearInterval(interval);
   }, []);
 
   return (
@@ -62,40 +72,43 @@ export default function EnergyMonitor() {
         </div>
 
         <button
-          onClick={loadData}
-          disabled={loading}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
+          onClick={() => {
+            loadData();
+            refreshCommodities();
+          }}
+          disabled={loading || commoditiesLoading}
+          className="flex min-h-10 items-center gap-2 px-3.5 py-2 rounded-lg bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${loading || commoditiesLoading ? 'animate-spin' : ''}`} />
           Refresh Data Energi
         </button>
       </div>
 
       {/* ─── KPIS ─── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
-          <div className="text-[11px] font-mono text-gray-400">MINYAK WTI (SPOT)</div>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#17220f] to-[#081226] border border-yellow-900/40 shadow-lg transition hover:border-yellow-700/60">
+          <div className="text-[11px] font-mono text-gray-400">MINYAK WTI FUTURES</div>
           <div className="text-2xl font-bold text-yellow-400 font-mono mt-1">
-            {commodities.find(c => c.symbol === 'WTI')?.price || '$71.24'}
+            {commodities.find(c => c.symbol === 'WTI')?.price || (commoditiesLoading ? <span className="inline-block h-7 w-24 animate-pulse rounded bg-yellow-950/60" /> : '—')}
           </div>
-          <div className="text-[10px] text-gray-500 mt-1">U.S. EIA / Alpha Vantage</div>
+          <div className="text-[10px] text-gray-500 mt-1">Yahoo Finance · intraday futures</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0a2030] to-[#081226] border border-cyan-900/40 shadow-lg transition hover:border-cyan-700/60">
           <div className="text-[11px] font-mono text-gray-400">GAS ALAM HENRY HUB</div>
           <div className="text-2xl font-bold text-cyan-400 font-mono mt-1">
-            {commodities.find(c => c.symbol === 'NATGAS')?.price || '$2.85'}
+            {commodities.find(c => c.symbol === 'NATGAS')?.price || (commoditiesLoading ? <span className="inline-block h-7 w-24 animate-pulse rounded bg-cyan-950/60" /> : '—')}
           </div>
           <div className="text-[10px] text-gray-500 mt-1">Henry Hub Louisiana</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#251a20] to-[#081226] border border-orange-900/40 shadow-lg transition hover:border-orange-700/60">
           <div className="text-[11px] font-mono text-gray-400">EMISI GRID GLOBAL RATARATA</div>
           <div className="text-2xl font-bold text-orange-400 font-mono mt-1">420 gCO2</div>
           <div className="text-[10px] text-gray-500 mt-1">per kWh listrik dunia</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0b2427] to-[#081226] border border-emerald-900/40 shadow-lg transition hover:border-emerald-700/60">
           <div className="text-[11px] font-mono text-gray-400">ENERGI TERBARUKAN</div>
           <div className="text-2xl font-bold text-emerald-400 font-mono mt-1">31.8%</div>
           <div className="text-[10px] text-gray-500 mt-1">Pangsa bauran listrik global</div>
@@ -111,7 +124,7 @@ export default function EnergyMonitor() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {GRID_ZONES.map(zone => (
             <div
               key={zone.code}
@@ -147,7 +160,16 @@ export default function EnergyMonitor() {
           </h2>
         </div>
 
-        <div className="p-4 rounded-lg bg-black/30 border border-cyan-950/80 font-mono text-xs text-gray-300 leading-relaxed">
+        {loading && !eiaData ? (
+          <div className="space-y-4 rounded-lg bg-black/30 border border-cyan-950/80 p-4" role="status" aria-label="Memuat data energi">
+            {[0, 1, 2].map(row => (
+              <div key={row} className="flex items-center justify-between gap-4 border-b border-gray-800 pb-3 last:border-0">
+                <span className="h-3 w-1/4 animate-pulse rounded bg-cyan-950/70" />
+                <span className="h-3 w-1/2 animate-pulse rounded bg-cyan-950/50" />
+              </div>
+            ))}
+          </div>
+        ) : <div className="p-4 rounded-lg bg-black/30 border border-cyan-950/80 font-mono text-xs text-gray-300 leading-relaxed">
           <div className="flex items-center justify-between border-b border-gray-800 pb-2 mb-2">
             <span className="text-gray-400">Sumber Pipeline:</span>
             <span className="text-cyan-400 font-bold">U.S. Energy Information Administration (EIA v2)</span>
@@ -162,7 +184,7 @@ export default function EnergyMonitor() {
             <span className="text-gray-400">Kategori Telemetri:</span>
             <span>Petroleum Spot Prices, Weekly Natural Gas Storage, & Refinery Utilization</span>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

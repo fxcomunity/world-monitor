@@ -54,6 +54,9 @@ export default function DataExplorer() {
 
   useEffect(() => {
     loadDataset(activeDataset);
+    if (activeDataset !== 'FOREX' && activeDataset !== 'COMMODITIES') return;
+    const interval = window.setInterval(() => loadDataset(activeDataset), 60 * 1000);
+    return () => window.clearInterval(interval);
   }, [activeDataset]);
 
   // Export to JSON

@@ -99,7 +99,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
       {/* ─── DESKTOP / TABLET SIDEBAR (md and up) ─── */}
       <aside
         className={`hidden md:flex flex-col bg-[#060D1F] border-r border-cyan-900/50 transition-all duration-300 ${
-          collapsed ? 'w-14' : 'w-56'
+          collapsed ? 'w-14' : 'w-48 lg:w-56'
         } h-screen flex-shrink-0`}
       >
         {/* Logo Header */}
@@ -136,7 +136,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="text-emerald-400 text-xs font-mono">Sistem Online</span>
               </div>
-              <div className="text-gray-600 text-[10px] font-mono mt-0.5">v1.0.0 · All API Live</div>
+              <div className="text-gray-600 text-[10px] font-mono mt-0.5">World Monitor · v1.0.0</div>
             </div>
           )}
         </div>

@@ -35,10 +35,10 @@
 | 🌐 **3D Interactive Globe** | Visualisasi bumi 3D dengan siklus siang/malam NASA, poligon negara HD, dan marker real-time |
 | 📊 **Statistical Dashboard** | Agregasi KPI: PDB World Bank, gempa USGS, kurs valas, dan bencana NASA |
 | 🔴 **Disaster & Seismic Monitor** | Pantauan gempa M4.5+ (USGS), bencana NASA EONET, siaran live YouTube 24/7, radar cuaca Windy |
-| 💹 **Financial Terminal** | Kurs valas 160+ mata uang, komoditas (WTI, Gas, Tembaga), sesi pasar global |
+| 💹 **Financial Terminal** | Kurs terbaru, grafik historis referensi harian ECB, komoditas (WTI, Gas, Tembaga), dan sesi pasar global |
 | 🌫️ **Air Quality Heatmap** | Sensor AQI, PM2.5, PM10, Ozon dari Open-Meteo untuk kota metropolitan |
 | ⚡ **Energy Monitor** | Data energi EIA, intensitas karbon Electricity Maps |
-| 🛰️ **Transport Radar** | Pelacakan penerbangan OpenSky ADS-B, data kapal AISStream |
+| 🛰️ **Transport Radar** | Peta posisi pesawat OpenSky dan posisi/jejak kapal AISStream pada koridor pelayaran yang dipantau |
 | 🤖 **AI Multi-Provider** | Auto-failover: Groq > Gemini > DeepSeek > OpenAI > Mistral > OpenRouter |
 | 💬 **Website AI Chat** | Bantuan penggunaan World Monitor melalui Worker, batas pesan, dan throttling |
 | 🏴 **Country Intelligence** | Profil 19+ negara dengan flag emoji, skor stabilitas, dan analisis regional |
@@ -57,9 +57,10 @@
 |:-------|:---------|:------------|:------|
 | 🔬 Seismik & Gempa | **USGS Earthquake Hazards** | REST GeoJSON | Gempa M4.5+ global (7 hari) |
 | 🛰️ Bencana Alam | **NASA EONET v3** | REST API | Kebakaran, siklon, erupsi, banjir |
-| 💱 Valas & Kurs | **ExchangeRate-API** | REST API | 160+ mata uang live |
-| 📈 PDB & Ekonomi | **World Bank Open Data** | REST JSON | PDB nominal & inflasi |
+| 💱 Valas & Kurs | **ExchangeRate-API** | REST API | Kurs terbaru untuk 160+ mata uang |
+| 📈 PDB & Ekonomi | **World Bank Open Data** | REST JSON | PDB nominal & inflasi tahunan; tampilkan tahun terakhir yang tersedia |
 | 🛢️ Komoditas | **Alpha Vantage** | REST API | WTI, Gas Alam, Tembaga |
+| 📰 Berita Sains & Teknologi | **GDELT, Spaceflight News API, RSS** | REST / RSS | Berita terkini dari beberapa sumber cadangan |
 | 🌬️ Kualitas Udara | **Open-Meteo** | REST API | AQI, PM2.5, PM10, Ozon |
 | ✈️ Penerbangan | **OpenSky Network** | REST API | ADS-B radar real-time |
 | ⚡ Energi | **U.S. EIA** | REST API | Data minyak & gas global |
@@ -249,22 +250,23 @@ psql -U your_user -d your_database -f database/schema.sql
 ```
 
 ### 4. Run Local Development Servers
-Untuk Laragon/Apache, akses situs melalui `http://EXPLOREID.test`. File `.htaccess` lokal meneruskan `/api/*` ke Worker pada port `8787`.
-
-Terminal pertama:
+Jalankan dari folder `frontend`:
 ```bash
-npx wrangler dev --config frontend/wrangler.toml --inspector-port 0
-```
-
-Wrangler membaca `frontend/.dev.vars` untuk secret API Worker lokal.
-
-Jika menggunakan Vite (opsional), jalankan dari terminal kedua:
-```bash
-cd frontend
 npm run dev
 ```
 
-Buka `http://localhost:5173` di browser. Vite juga mem-proxy `/api/*` ke Worker lokal. Perintah Wrangler dari root menggunakan Wrangler v4; Wrangler v3 yang terpasang di `frontend` dapat gagal menjalankan `workerd` di beberapa lingkungan Windows.
+Perintah ini membangun aset awal bila diperlukan, menjalankan Cloudflare Worker lokal pada port `8787`, menunggu API siap, lalu menjalankan Vite. Vite mem-proxy `/api/*` ke Worker tersebut. Wrangler membaca `frontend/.dev.vars` untuk secret API Worker lokal.
+
+Untuk API key API Indonesia saat development, salin `frontend/.dev.vars.example` menjadi `frontend/.dev.vars`, lalu isi nilainya:
+```env
+APIINDONESIA_KEY=api_key_dari_dashboard_apiindonesia
+```
+Jangan menaruh key ini di `.env` root, kode frontend, atau variabel `VITE_*`; Worker membaca `frontend/.dev.vars` dan menjaga key tetap di sisi server. Untuk production, atur secret dari folder `frontend`:
+```bash
+npx wrangler secret put APIINDONESIA_KEY
+```
+
+Buka `http://localhost:5173` di browser. Untuk Laragon/Apache, akses `http://EXPLOREID.test` dan pastikan Worker lokal tetap berjalan pada port `8787`; file `.htaccess` lokal meneruskan `/api/*` ke Worker.
 
 ### 5. Build for Production
 ```bash

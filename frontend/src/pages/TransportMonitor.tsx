@@ -1,9 +1,65 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Truck, Plane, Navigation, RefreshCw, Anchor,
   Globe, Radio, Compass, ArrowUpRight, ShieldCheck, MapPin
 } from 'lucide-react';
-import { fetchLiveFlights, LiveFlight } from '../lib/api';
+import { createLiveShipsSocket, fetchLiveFlights, LiveFlight, LiveShip } from '../lib/api';
+import TransportMap from './TransportMap';
+import { TableSkeleton, ValueSkeleton } from '../components/MonitorSkeleton';
+
+type Track = Record<string, Array<[number, number]>>;
+
+interface AISPositionMessage {
+  MessageType?: string;
+  MetaData?: {
+    MMSI?: string | number;
+    ShipName?: string;
+    Latitude?: number;
+    Longitude?: number;
+    latitude?: number;
+    longitude?: number;
+  };
+  Message?: {
+    PositionReport?: {
+      Sog?: number;
+      Cog?: number;
+      Latitude?: number;
+      Longitude?: number;
+    };
+  };
+}
+
+function decodeShipPosition(text: string): LiveShip | null {
+  try {
+    const message = JSON.parse(text) as AISPositionMessage;
+    const metadata = message.MetaData;
+    const position = message.Message?.PositionReport;
+    const lat = metadata?.Latitude ?? metadata?.latitude ?? position?.Latitude;
+    const lng = metadata?.Longitude ?? metadata?.longitude ?? position?.Longitude;
+    if (
+      message.MessageType !== 'PositionReport' ||
+      metadata?.MMSI === undefined ||
+      typeof lat !== 'number' ||
+      typeof lng !== 'number' ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      Math.abs(lat) > 90 ||
+      Math.abs(lng) > 180
+    ) return null;
+
+    return {
+      mmsi: String(metadata.MMSI),
+      name: metadata.ShipName?.trim() || 'Kapal tanpa nama',
+      lat,
+      lng,
+      speed: typeof position?.Sog === 'number' && Number.isFinite(position.Sog) ? position.Sog : null,
+      heading: typeof position?.Cog === 'number' && Number.isFinite(position.Cog) ? position.Cog : null,
+      receivedAt: Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
 
 // Titik Selat & Jalur Pelayaran Maritim Strategis Dunia (Chokepoints)
 const MARITIME_CHOKEPOINTS = [
@@ -69,6 +125,12 @@ export default function TransportMonitor() {
   const [searchFlight, setSearchFlight] = useState('');
   const [flightPage, setFlightPage] = useState(0);
   const [flightsError, setFlightsError] = useState<string | null>(null);
+  const [ships, setShips] = useState<LiveShip[]>([]);
+  const [flightTrails, setFlightTrails] = useState<Track>({});
+  const [shipTrails, setShipTrails] = useState<Track>({});
+  const [shipStreamStatus, setShipStreamStatus] = useState<'connecting' | 'online' | 'offline' | 'missing-key'>('connecting');
+  const [lastFlightUpdate, setLastFlightUpdate] = useState('');
+  const shipBuffer = useRef(new Map<string, LiveShip>());
 
   const loadFlights = async () => {
     setLoading(true);
@@ -77,6 +139,17 @@ export default function TransportMonitor() {
       const data = await fetchLiveFlights();
       setFlights(data);
       setFlightPage(0);
+      setLastFlightUpdate(new Date().toLocaleTimeString('id-ID'));
+      setFlightTrails(current => {
+        const next: Track = {};
+        data.slice(0, 1200).forEach(flight => {
+          const previous = current[flight.icao24] || [];
+          const last = previous[previous.length - 1];
+          const moved = !last || Math.abs(last[0] - flight.lng) + Math.abs(last[1] - flight.lat) > 0.02;
+          next[flight.icao24] = (moved ? [...previous, [flight.lng, flight.lat] as [number, number]] : previous).slice(-8);
+        });
+        return next;
+      });
     } catch (e) {
       console.error('Failed to load flights:', e);
       setFlightsError(e instanceof Error ? e.message : 'Kesalahan tidak diketahui');
@@ -91,6 +164,93 @@ export default function TransportMonitor() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | undefined;
+    let retryDelay = 5000;
+
+    const scheduleReconnect = () => {
+      if (!active) return;
+      setShipStreamStatus('offline');
+      reconnectTimer = window.setTimeout(() => void connect(), retryDelay);
+      retryDelay = Math.min(30000, retryDelay * 2);
+    };
+
+    const connect = async () => {
+      try {
+        const response = await fetch('/api/transport/ships/status', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`AIS status HTTP ${response.status}`);
+        const status = await response.json() as { available?: boolean };
+        if (!active) return;
+        if (!status.available) {
+          setShipStreamStatus('missing-key');
+          return;
+        }
+
+        socket = createLiveShipsSocket();
+        socket.binaryType = 'arraybuffer';
+        socket.onopen = () => {
+          retryDelay = 5000;
+          setShipStreamStatus('online');
+        };
+        socket.onmessage = event => {
+          const text = typeof event.data === 'string'
+            ? event.data
+            : event.data instanceof ArrayBuffer
+              ? new TextDecoder().decode(event.data)
+              : event.data instanceof Blob
+                ? null
+                : null;
+          if (text !== null) {
+            const ship = decodeShipPosition(text);
+            if (ship) shipBuffer.current.set(ship.mmsi, ship);
+          } else if (event.data instanceof Blob) {
+            void event.data.text().then(value => {
+              const ship = decodeShipPosition(value);
+              if (ship) shipBuffer.current.set(ship.mmsi, ship);
+            });
+          }
+        };
+        socket.onerror = () => setShipStreamStatus('offline');
+        socket.onclose = () => scheduleReconnect();
+      } catch (error) {
+        console.error('AISStream ship connection failed:', error);
+        scheduleReconnect();
+      }
+    };
+
+    const flushTimer = window.setInterval(() => {
+      if (!shipBuffer.current.size) return;
+      const updates = [...shipBuffer.current.values()].slice(-500);
+      shipBuffer.current.clear();
+      setShips(current => {
+        const next = new Map(current.map(ship => [ship.mmsi, ship]));
+        updates.forEach(ship => next.set(ship.mmsi, ship));
+        const fresh = [...next.values()].filter(ship => Date.now() - ship.receivedAt < 10 * 60 * 1000);
+        return fresh.slice(-500);
+      });
+      setShipTrails(current => {
+        const next = { ...current };
+        updates.forEach(ship => {
+          const trail = next[ship.mmsi] || [];
+          const last = trail[trail.length - 1];
+          const moved = !last || Math.abs(last[0] - ship.lng) + Math.abs(last[1] - ship.lat) > 0.001;
+          if (moved) next[ship.mmsi] = [...trail, [ship.lng, ship.lat] as [number, number]].slice(-8);
+        });
+        return next;
+      });
+    }, 2500);
+
+    void connect();
+    return () => {
+      active = false;
+      window.clearInterval(flushTimer);
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, []);
+
   const filteredFlights = flights.filter(f =>
     f.callsign.toLowerCase().includes(searchFlight.toLowerCase()) ||
     f.country.toLowerCase().includes(searchFlight.toLowerCase())
@@ -101,6 +261,8 @@ export default function TransportMonitor() {
     flightPage * flightPageSize,
     (flightPage + 1) * flightPageSize,
   );
+  const trackedRouteCount = Object.values(flightTrails).filter(track => track.length > 1).length
+    + Object.values(shipTrails).filter(track => track.length > 1).length;
 
   return (
     <div className="w-full min-h-full bg-[#060D1F] text-gray-200 p-3 sm:p-5 lg:p-6 space-y-6">
@@ -125,7 +287,7 @@ export default function TransportMonitor() {
         <button
           onClick={loadFlights}
           disabled={loading}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
+          className="flex min-h-10 items-center gap-2 px-3.5 py-2 rounded-lg bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh Radar
@@ -133,37 +295,46 @@ export default function TransportMonitor() {
       </div>
 
       {/* ─── KPIS ─── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0a1934] to-[#081226] border border-cyan-900/40 shadow-lg transition hover:border-cyan-700/60">
           <div className="text-[11px] font-mono text-gray-400">PESAWAT TERDETEKSI (RADAR)</div>
           <div className="text-2xl font-bold text-cyan-400 font-mono mt-1 flex items-center justify-between">
-            {flights.length}
+            {loading && flights.length === 0 ? <ValueSkeleton /> : flights.length}
             <Plane className="w-5 h-5 text-cyan-500/40" />
           </div>
           <div className="text-[10px] text-gray-500 mt-1">OpenSky ADS-B transponder</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
-          <div className="text-[11px] font-mono text-gray-400">CHOKEPOINTS MARITIM AKTIF</div>
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0b2420] to-[#081226] border border-emerald-900/40 shadow-lg transition hover:border-emerald-700/60">
+          <div className="text-[11px] font-mono text-gray-400">AREA PELAYARAN DIPANTAU</div>
           <div className="text-2xl font-bold text-emerald-400 font-mono mt-1 flex items-center justify-between">
             6 / 6
             <Anchor className="w-5 h-5 text-emerald-500/40" />
           </div>
-          <div className="text-[10px] text-gray-500 mt-1">Selat Malaka, Suez, Panama, dll.</div>
+          <div className="text-[10px] text-gray-500 mt-1">Area AIS utama · bukan hitungan kapal</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
-          <div className="text-[11px] font-mono text-gray-400">KONEKTIVITAS AISSTREAM</div>
-          <div className="text-2xl font-bold text-emerald-400 font-mono mt-1">SIAP</div>
-          <div className="text-[10px] text-gray-500 mt-1">WebSocket Gateway Aktif</div>
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#251d0c] to-[#081226] border border-amber-900/40 shadow-lg transition hover:border-amber-700/60">
+          <div className="text-[11px] font-mono text-gray-400">KAPAL AIS TERDETEKSI</div>
+          <div className="text-2xl font-bold text-amber-300 font-mono mt-1">{ships.length}</div>
+          <div className="text-[10px] text-gray-500 mt-1">
+            {shipStreamStatus === 'online' ? 'AISStream tersambung' : shipStreamStatus === 'missing-key' ? 'AISSTREAM_KEY belum disetel' : shipStreamStatus === 'connecting' ? 'Menyambungkan AISStream...' : 'Stream offline · mencoba ulang'}
+          </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
-          <div className="text-[11px] font-mono text-gray-400">STATUS LOGISTIK GLOBAL</div>
-          <div className="text-2xl font-bold text-yellow-400 font-mono mt-1">NORMAL (94%)</div>
-          <div className="text-[10px] text-gray-500 mt-1">Rantai pasok beroperasi</div>
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#22210f] to-[#081226] border border-yellow-900/40 shadow-lg transition hover:border-yellow-700/60">
+          <div className="text-[11px] font-mono text-gray-400">JEJAK PERGERAKAN TEREKAM</div>
+          <div className="text-2xl font-bold text-yellow-300 font-mono mt-1">{trackedRouteCount}</div>
+          <div className="text-[10px] text-gray-500 mt-1">Dari posisi yang diterima selama sesi ini</div>
         </div>
       </div>
+
+      <TransportMap
+        flights={flights}
+        ships={ships}
+        flightTrails={flightTrails}
+        shipTrails={shipTrails}
+      />
 
       {/* ─── MARITIME CHOKEPOINTS SECTION ─── */}
       <div className="rounded-xl bg-[#081226] border border-cyan-900/50 p-4">
@@ -215,30 +386,45 @@ export default function TransportMonitor() {
               Radar Penerbangan Langsung (OpenSky Network ADS-B)
             </h2>
           </div>
-          <input
-            type="text"
-            placeholder="Cari Callsign atau Negara..."
-            value={searchFlight}
-            onChange={e => {
-              setSearchFlight(e.target.value);
-              setFlightPage(0);
-            }}
-            className="px-3 py-1 rounded bg-black/40 border border-cyan-900/50 text-xs font-mono text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 w-full sm:w-64"
-          />
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <input
+              type="text"
+              placeholder="Cari Callsign atau Negara..."
+              value={searchFlight}
+              onChange={e => {
+                setSearchFlight(e.target.value);
+                setFlightPage(0);
+              }}
+              className="px-3 py-1 rounded bg-black/40 border border-cyan-900/50 text-xs font-mono text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 w-full sm:w-64"
+            />
+            <a
+              href="https://id.airnavradar.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded border border-cyan-800/60 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/50 text-xs font-mono transition whitespace-nowrap"
+              aria-label="Buka radar penerbangan AirNavRadar di tab baru"
+            >
+              AirNavRadar
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
+        <p className="mb-3 text-[10px] text-gray-500">
+          Posisi pada peta dan tabel menggunakan OpenSky ADS-B; tombol AirNavRadar membuka radar penerbangan resminya di tab baru.
+        </p>
 
         <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
           {loading ? (
-            <div className="text-center py-12 text-cyan-500/70 text-xs font-mono">
-              Memindai transponder pesawat di ruang udara internasional...
-            </div>
+            <TableSkeleton rows={8} columns={6} />
           ) : flightsError ? (
             <div className="text-center py-12 text-amber-400 text-xs font-mono">
               Gagal memuat data OpenSky: {flightsError}
             </div>
           ) : filteredFlights.length === 0 ? (
             <div className="text-center py-12 text-gray-500 text-xs font-mono">
-              Tidak ada penerbangan yang cocok dengan pencarian Anda.
+              {flights.length === 0
+                ? 'Belum ada posisi pesawat valid dari OpenSky pada pembaruan ini.'
+                : 'Tidak ada penerbangan yang cocok dengan pencarian Anda.'}
             </div>
           ) : (
             <table className="w-full text-left text-xs font-mono">
@@ -275,7 +461,7 @@ export default function TransportMonitor() {
         {!loading && !flightsError && filteredFlights.length > 0 && (
           <div className="flex items-center justify-between gap-3 pt-3 text-[10px] font-mono text-gray-400">
             <span>
-              Menampilkan {flightPage * flightPageSize + 1}–{Math.min((flightPage + 1) * flightPageSize, filteredFlights.length)} dari {filteredFlights.length} pesawat
+              Update {lastFlightUpdate || '—'} · Menampilkan {flightPage * flightPageSize + 1}–{Math.min((flightPage + 1) * flightPageSize, filteredFlights.length)} dari {filteredFlights.length} pesawat
             </span>
             {pageCount > 1 && (
               <div className="flex gap-2">

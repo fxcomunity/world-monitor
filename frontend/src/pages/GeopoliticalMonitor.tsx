@@ -4,6 +4,7 @@ import {
   ExternalLink, AlertTriangle, Layers, Radio
 } from 'lucide-react';
 import { fetchGeopoliticalEvents, GeopoliticalEvent, runAIAnalysis } from '../lib/api';
+import { ListSkeleton, ValueSkeleton } from '../components/MonitorSkeleton';
 
 export default function GeopoliticalMonitor() {
   const [events, setEvents] = useState<GeopoliticalEvent[]>([]);
@@ -85,7 +86,7 @@ Instruksi Analisis:
           <button
             onClick={loadData}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-1.5 rounded bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
+            className="flex min-h-10 items-center gap-2 px-3 py-2 rounded-lg bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/40 text-cyan-300 text-xs font-mono transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh Data
@@ -94,7 +95,7 @@ Instruksi Analisis:
           <button
             onClick={handleRunAI}
             disabled={aiLoading}
-            className="flex items-center gap-2 px-4 py-1.5 rounded bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold shadow-lg shadow-cyan-950/50 transition"
+            className="flex min-h-10 items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold shadow-lg shadow-cyan-950/50 transition"
           >
             <Sparkles className={`w-3.5 h-3.5 ${aiLoading ? 'animate-spin' : ''}`} />
             {aiLoading ? 'Menganalisis...' : 'AI Geopolitical Briefing'}
@@ -126,30 +127,30 @@ Instruksi Analisis:
       )}
 
       {/* ─── KPIS ─── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0a1934] to-[#081226] border border-cyan-900/40 shadow-lg transition hover:border-cyan-700/60">
           <div className="text-[11px] font-mono text-gray-400">TOTAL EVENT TERPANTAU</div>
-          <div className="text-2xl font-bold text-cyan-400 font-mono mt-1">{events.length}</div>
+          <div className="text-2xl font-bold text-cyan-400 font-mono mt-1">{loading && events.length === 0 ? <ValueSkeleton /> : events.length}</div>
           <div className="text-[10px] text-gray-500 mt-1">GDELT + UN ReliefWeb</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#251519] to-[#081226] border border-red-900/40 shadow-lg transition hover:border-red-700/60">
           <div className="text-[11px] font-mono text-gray-400">KONFLIK & MILITER (GDELT)</div>
           <div className="text-2xl font-bold text-red-400 font-mono mt-1">
-            {events.filter(e => e.source.includes('GDELT')).length}
+            {loading && events.length === 0 ? <ValueSkeleton /> : events.filter(e => e.source.includes('GDELT')).length}
           </div>
           <div className="text-[10px] text-gray-500 mt-1">Insiden bersenjata & protes</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#251a20] to-[#081226] border border-orange-900/40 shadow-lg transition hover:border-orange-700/60">
           <div className="text-[11px] font-mono text-gray-400">KRISIS PBB (RELIEFWEB)</div>
           <div className="text-2xl font-bold text-orange-400 font-mono mt-1">
-            {events.filter(e => e.source.includes('ReliefWeb')).length}
+            {loading && events.length === 0 ? <ValueSkeleton /> : events.filter(e => e.source.includes('ReliefWeb')).length}
           </div>
           <div className="text-[10px] text-gray-500 mt-1">Zona darurat kemanusiaan</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#081226] border border-cyan-900/40">
+        <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#25220f] to-[#081226] border border-yellow-900/40 shadow-lg transition hover:border-yellow-700/60">
           <div className="text-[11px] font-mono text-gray-400">INDEKS KETEGANGAN GLOBAL</div>
           <div className="text-2xl font-bold text-yellow-400 font-mono mt-1">MODERAT (62/100)</div>
           <div className="text-[10px] text-gray-500 mt-1">Stabilisasi regional</div>
@@ -183,10 +184,8 @@ Instruksi Analisis:
         </div>
 
         <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
-          {loading ? (
-            <div className="text-center py-16 text-cyan-500/70 text-xs font-mono">
-              Memuat telemetri geopolitik dunia dari satelit dan feed berita global...
-            </div>
+          {loading && filteredEvents.length === 0 ? (
+            <ListSkeleton rows={6} />
           ) : filteredEvents.length === 0 ? (
             <div className="text-center py-16 text-gray-500 text-xs font-mono">
               Tidak ada event ditemukan.

@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Wind, RefreshCw, MapPin, AlertTriangle, TrendingUp, Navigation, Info } from 'lucide-react';
+import {
+  Wind, RefreshCw, MapPin, AlertTriangle, TrendingUp, Navigation, Info,
+  Gauge, Globe2, ShieldCheck, Activity,
+} from 'lucide-react';
 import { fetchAirQualityLive } from '../lib/api';
-
-const MAPTILER_KEY = (import.meta.env.VITE_MAPTILER_KEY as string) || 'yOkVtwcO1iYENTiJvyrd';
+import { ListSkeleton } from '../components/MonitorSkeleton';
 
 // ─── AQI Helpers ──────────────────────────────────────────────────────────────
-function aqiLevel(aqi: number): { label: string; color: string; bg: string; risk: number } {
-  if (aqi <= 50)  return { label: 'Baik',           color: '#00e400', bg: 'rgba(0,228,0,0.15)',      risk: 5  };
-  if (aqi <= 100) return { label: 'Sedang',         color: '#ffff00', bg: 'rgba(255,255,0,0.15)',    risk: 25 };
-  if (aqi <= 150) return { label: 'Tidak Sehat*',   color: '#ff7e00', bg: 'rgba(255,126,0,0.15)',    risk: 50 };
-  if (aqi <= 200) return { label: 'Tidak Sehat',    color: '#ff0000', bg: 'rgba(255,0,0,0.15)',      risk: 70 };
-  if (aqi <= 300) return { label: 'Sangat Berbahaya',color: '#8f3f97', bg: 'rgba(143,63,151,0.15)', risk: 88 };
-  return           { label: 'Berbahaya',             color: '#7e0023', bg: 'rgba(126,0,35,0.15)',    risk: 98 };
+function aqiLevel(aqi: number): { label: string; color: string; bg: string } {
+  if (aqi <= 50)  return { label: 'Baik',            color: '#00e400', bg: 'rgba(0,228,0,0.15)' };
+  if (aqi <= 100) return { label: 'Sedang',          color: '#ffff00', bg: 'rgba(255,255,0,0.15)' };
+  if (aqi <= 150) return { label: 'Tidak Sehat*',    color: '#ff7e00', bg: 'rgba(255,126,0,0.15)' };
+  if (aqi <= 200) return { label: 'Tidak Sehat',     color: '#ff0000', bg: 'rgba(255,0,0,0.15)' };
+  if (aqi <= 300) return { label: 'Sangat Berbahaya', color: '#8f3f97', bg: 'rgba(143,63,151,0.15)' };
+  return           { label: 'Berbahaya',              color: '#7e0023', bg: 'rgba(126,0,35,0.15)' };
 }
 
 // Kota-kota sampling untuk perbandingan real-time
@@ -51,6 +53,7 @@ export default function Environment() {
   const [mapReady, setMapReady]       = useState(false);
   const [lastUpdate, setLastUpdate]   = useState('');
   const [loadError, setLoadError]     = useState<string | null>(null);
+  const [mapError, setMapError]       = useState<string | null>(null);
 
   // ── Siapkan data kota terkini dari Open-Meteo Air Quality API ────────────────
   const loadData = useCallback(async () => {
@@ -78,7 +81,14 @@ export default function Environment() {
       if (data.length === 0) {
         setLoadError('Belum ada pembacaan kualitas udara yang valid dari Open-Meteo.');
       } else {
-        setLastUpdate(new Date().toLocaleTimeString('id-ID'));
+        const observedTimes = readings
+          .map(reading => reading?.time)
+          .filter((time): time is string => Boolean(time))
+          .sort();
+        const observedAt = observedTimes[observedTimes.length - 1];
+        setLastUpdate(observedAt
+          ? new Date(`${observedAt}Z`).toLocaleTimeString('id-ID', { hour12: false, timeZone: 'Asia/Jakarta' })
+          : '—');
       }
     } catch (err) {
       console.error('Error fetching real-time air quality:', err);
@@ -104,15 +114,22 @@ export default function Environment() {
 
       const map = new maplibregl.Map({
         container: mapContainerRef.current,
-        style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`,
+        style: 'https://tiles.openfreemap.org/styles/dark',
         center: [20, 20],
         zoom: 1.8,
-        attributionControl: false,
+        attributionControl: { compact: true },
       });
 
-      map.on('load', () => {
+      map.on('error', event => {
+        const message = event.error?.message || 'Peta tidak dapat memuat sebagian data.';
+        console.error('Environment map error:', message);
+        if (mounted) setMapError(message);
+      });
+
+      map.on('style.load', () => {
         if (!mounted) return;
         mapRef.current = map;
+        setMapError(null);
 
         // ── Tambah titik kota dari data aktual setelah peta siap ──────────
         map.addSource('city-points', {
@@ -151,6 +168,7 @@ export default function Environment() {
           source: 'city-points',
           layout: {
             'text-field': ['get', 'name'],
+            'text-font': ['Noto Sans Regular'],
             'text-size': 10,
             'text-offset': [0, 1.2],
             'text-anchor': 'top',
@@ -232,35 +250,40 @@ export default function Environment() {
   };
 
   const currentLevel = selectedCity ? aqiLevel(selectedCity.aqi) : null;
+  const averageAqi = cities.length
+    ? Math.round(cities.reduce((total, city) => total + city.aqi, 0) / cities.length)
+    : null;
+  const unhealthyCities = cities.filter(city => city.aqi > 100).length;
+  const cleanestCity = cities[cities.length - 1] || null;
 
   return (
-    <div className="w-full min-h-full bg-[#050B18] text-white font-mono flex flex-col">
+    <div className="w-full min-h-[calc(100vh-51px)] bg-[#050B18] text-white font-mono flex flex-col lg:h-[calc(100vh-51px)] lg:min-h-[700px]">
       {/* ── Top Bar ── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 py-3 bg-[#060D1F] border-b border-cyan-900/50 flex-shrink-0 gap-3">
         <div className="flex items-center gap-3">
           <Wind className="w-5 h-5 text-cyan-400 flex-shrink-0" />
           <div>
-            <h1 className="text-xs sm:text-sm font-bold tracking-wider text-white uppercase flex flex-wrap items-center gap-2">
+            <h1 className="text-sm sm:text-base font-bold tracking-wider text-white uppercase flex flex-wrap items-center gap-2">
               <span>MONITOR KUALITAS UDARA GLOBAL</span>
               <span className="text-[10px] text-emerald-400 border border-emerald-800/80 px-1.5 py-0.5 rounded bg-emerald-950/60 font-bold">
                 DATA TERKINI
               </span>
             </h1>
-            <div className="text-[11px] text-gray-500">
-              Estimasi kualitas udara Open-Meteo untuk kota-kota sampel · pembaruan berkala
+            <div className="text-xs text-gray-400">
+              Estimasi kualitas udara Open-Meteo · data terbaru dari model per jam, halaman disinkronkan tiap 10 menit
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
           <div className="text-left sm:text-right text-xs">
-            <span className="text-gray-500">TERAKHIR DIPERBARUI: </span>
+            <span className="text-gray-500">WAKTU DATA (WIB): </span>
             <span className="text-cyan-400">{lastUpdate || 'MEMUAT...'}</span>
           </div>
           <button
             onClick={loadData}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 hover:border-cyan-400 transition"
+            className="flex min-h-10 items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 hover:border-cyan-400 transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             REFRESH
@@ -268,17 +291,60 @@ export default function Environment() {
         </div>
       </div>
 
+      <section aria-label="Ringkasan kualitas udara" className="grid grid-cols-2 gap-3 border-b border-cyan-900/40 bg-[#071126] p-3 sm:grid-cols-4 sm:px-5 lg:px-6">
+        <div className="rounded-xl border border-cyan-900/50 bg-[#09172c] p-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider text-gray-500">
+            <Globe2 className="h-3.5 w-3.5 text-cyan-400" /> KOTA TERPANTAU
+          </div>
+          <div className="mt-1 text-2xl font-black text-white">{loading ? '—' : cities.length}</div>
+          <div className="text-[10px] text-gray-500">lokasi di 6 kawasan dunia</div>
+        </div>
+        <div className="rounded-xl border border-cyan-900/50 bg-[#09172c] p-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider text-gray-500">
+            <Gauge className="h-3.5 w-3.5 text-cyan-400" /> RATA-RATA AQI
+          </div>
+          <div className="mt-1 text-2xl font-black text-white">{loading ? '—' : averageAqi ?? '—'}</div>
+          <div className="text-[10px] text-gray-500">rata-rata lokasi dengan data</div>
+        </div>
+        <div className="rounded-xl border border-rose-900/40 bg-[#160f1d] p-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider text-gray-500">
+            <AlertTriangle className="h-3.5 w-3.5 text-rose-400" /> AQI DI ATAS 100
+          </div>
+          <div className="mt-1 text-2xl font-black text-rose-300">{loading ? '—' : unhealthyCities}</div>
+          <div className="text-[10px] text-gray-500">lokasi kategori tidak sehat ke atas</div>
+        </div>
+        <div className="rounded-xl border border-emerald-900/40 bg-[#0b191a] p-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider text-gray-500">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> AQI TERENDAH
+          </div>
+          <div className="mt-1 truncate text-base font-black text-emerald-300">{loading ? '—' : cleanestCity?.name ?? '—'}</div>
+          <div className="text-[10px] text-gray-500">{cleanestCity ? `AQI ${cleanestCity.aqi} · ${cleanestCity.country}` : 'lokasi dengan data terendah'}</div>
+        </div>
+      </section>
+
       {/* ── Main Layout: Map (kiri) + Panel (kanan) — RESPONSIVE ON ALL DEVICES ── */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Map Container */}
-        <div className="w-full h-[360px] sm:h-[450px] lg:h-full lg:flex-1 relative overflow-hidden flex-shrink-0">
+        <div className="w-full h-[360px] sm:h-[450px] lg:h-full lg:min-h-0 lg:flex-1 relative overflow-hidden flex-shrink-0">
           <div ref={mapContainerRef} className="w-full h-full" />
 
           {!mapReady && (
             <div className="absolute inset-0 bg-[#050B18] flex flex-col items-center justify-center z-10"
               style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, rgba(0,200,50,0.04) 0%, transparent 60%)' }}>
-              <div className="text-green-400 text-sm font-bold animate-pulse mb-2">MEMUAT PETA KUALITAS UDARA...</div>
-              <div className="text-gray-600 text-xs">MapLibre GL · MapTiler Dark · Open-Meteo Live Data</div>
+              <div className="mb-3 h-3 w-56 max-w-[75%] animate-pulse rounded bg-emerald-950/70" />
+              <div className="mb-3 h-2 w-40 max-w-[60%] animate-pulse rounded bg-cyan-950/60" />
+              <div className="text-green-400 text-sm font-bold mb-2">
+                {mapError ? 'PETA BELUM DAPAT DIMUAT' : 'MEMUAT PETA KUALITAS UDARA...'}
+              </div>
+              <div className="max-w-[85%] text-center text-gray-500 text-xs">
+                {mapError || 'Peta OpenFreeMap · pembacaan kualitas udara Open-Meteo'}
+              </div>
+            </div>
+          )}
+
+          {mapError && mapReady && (
+            <div role="status" className="absolute right-3 top-3 z-10 max-w-xs rounded-lg border border-amber-800/60 bg-[#101522]/95 px-3 py-2 text-[10px] text-amber-200 shadow-lg">
+              Sebagian layer peta bermasalah: {mapError}
             </div>
           )}
 
@@ -309,7 +375,7 @@ export default function Environment() {
         </div>
 
         {/* Panel Kanan */}
-        <div className="w-full lg:w-80 bg-[#060D1F] border-t lg:border-t-0 lg:border-l border-cyan-900/50 flex flex-col flex-shrink-0 overflow-y-auto overscroll-contain">
+        <div className="w-full lg:h-full lg:min-h-0 lg:w-80 bg-[#060D1F] border-t lg:border-t-0 lg:border-l border-cyan-900/50 flex flex-col flex-shrink-0 overflow-y-auto overscroll-contain">
           {/* Detail Kota Terpilih */}
           {selectedCity && currentLevel && (
             <div className="p-4 border-b border-cyan-900/50">
@@ -344,7 +410,7 @@ export default function Environment() {
                       {currentLevel.label}
                     </span>
                     <div className="text-[10px] text-gray-400 mt-1">
-                      Risiko: {currentLevel.risk}%
+                      Skala US AQI
                     </div>
                   </div>
                 </div>
@@ -387,6 +453,7 @@ export default function Environment() {
               {cities.length === 0 && !loading && !loadError && (
                 <div className="text-xs text-gray-500">Belum ada data kualitas udara.</div>
               )}
+              {cities.length === 0 && loading && <ListSkeleton rows={5} />}
               {cities.map((city, idx) => {
                 const lvl = aqiLevel(city.aqi);
                 const isSelected = selectedCity?.name === city.name;
@@ -408,6 +475,7 @@ export default function Environment() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <span className="hidden text-[10px] text-gray-500 sm:inline">PM2.5 {city.pm25}</span>
                       <span
                         className="px-1.5 py-0.5 rounded text-[10px] font-bold"
                         style={{ color: lvl.color, backgroundColor: `${lvl.color}15` }}
@@ -420,6 +488,24 @@ export default function Environment() {
               })}
             </div>
           </div>
+
+          {selectedCity && currentLevel && (
+            <div className="border-t border-cyan-900/40 p-4">
+              <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-gray-400">
+                <Activity className="h-3.5 w-3.5 text-cyan-400" /> Panduan berdasarkan AQI
+              </div>
+              <p className="text-[11px] leading-relaxed text-gray-400">
+                {selectedCity.aqi <= 50
+                  ? `Udara di ${selectedCity.name} tergolong baik. Aktivitas luar ruang umumnya dapat dilakukan seperti biasa.`
+                  : selectedCity.aqi <= 100
+                    ? `Udara di ${selectedCity.name} sedang. Kelompok sensitif sebaiknya memperhatikan gejala saat beraktivitas di luar.`
+                    : `Udara di ${selectedCity.name} masuk kategori ${currentLevel.label.toLowerCase()}. Pertimbangkan mengurangi aktivitas berat di luar, terutama bagi kelompok sensitif.`}
+              </p>
+              <p className="mt-2 text-[9px] leading-relaxed text-gray-600">
+                Indikator berasal dari estimasi model Open-Meteo pada titik koordinat kota, bukan sensor stasiun lokal.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

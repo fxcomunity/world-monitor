@@ -13,6 +13,7 @@ import {
   categoryToIcon,
   LiveGDPRecord
 } from '../lib/api';
+import { ListSkeleton, TableSkeleton, ValueSkeleton } from '../components/MonitorSkeleton';
 
 interface DisasterEvent {
   id: string;
@@ -58,30 +59,21 @@ export default function StatisticsDashboard() {
     return () => clearInterval(t);
   }, []);
 
-  // Fetch 100% Live Real Data (No Mock/Dummy Data)
+  // Load latest available feed data; each provider keeps its own update cadence.
   const loadStats = async () => {
     setLoading(true);
     try {
-      const [disRes, quakeRes, rateRes, gdpRes, comRes] = await Promise.allSettled([
+      const [disRes, quakeRes, gdpRes] = await Promise.allSettled([
         fetchDisasters(),
         fetchEarthquakes(),
-        fetchExchangeRates('USD'),
         fetchGlobalGDP(),
-        fetchLiveCommodities(),
       ]);
 
       if (disRes.status === 'fulfilled') setDisasters(disRes.value);
       if (quakeRes.status === 'fulfilled') setQuakes(quakeRes.value);
-      if (rateRes.status === 'fulfilled' && rateRes.value?.conversion_rates) {
-        setRates(rateRes.value.conversion_rates);
-      }
       if (gdpRes.status === 'fulfilled' && gdpRes.value?.length) {
         setGdpList(gdpRes.value);
       }
-      if (comRes.status === 'fulfilled' && comRes.value?.length) {
-        setCommodities(comRes.value);
-      }
-
       setLastSync(new Date().toLocaleTimeString('id-ID'));
     } catch (err) {
       console.error('Error fetching dashboard stats:', err);
@@ -92,6 +84,48 @@ export default function StatisticsDashboard() {
 
   useEffect(() => {
     loadStats();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refreshRates = async () => {
+      try {
+        const result = await fetchExchangeRates('USD');
+        if (active) setRates(result.conversion_rates);
+      } catch (error) {
+        if (!active) return;
+        console.error('Failed to refresh dashboard currency quotes:', error);
+        setRates({});
+      }
+    };
+
+    refreshRates();
+    const interval = window.setInterval(refreshRates, 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refreshCommodities = async () => {
+      try {
+        const result = await fetchLiveCommodities();
+        if (active) setCommodities(result);
+      } catch (error) {
+        if (!active) return;
+        console.error('Failed to refresh dashboard commodity quotes:', error);
+        setCommodities([]);
+      }
+    };
+
+    refreshCommodities();
+    const interval = window.setInterval(refreshCommodities, 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
   }, []);
 
   // Hitung distribusi kategori bencana NASA EONET
@@ -130,10 +164,10 @@ export default function StatisticsDashboard() {
         <div className="flex items-center gap-3">
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#00e5ff] flex-shrink-0" />
           <div>
-            <h1 className="text-xs sm:text-sm font-bold tracking-widest text-white uppercase flex flex-wrap items-center gap-2">
+            <h1 className="text-sm sm:text-base font-bold tracking-widest text-white uppercase flex flex-wrap items-center gap-2">
               <span>GLOBAL STATISTICAL INTELLIGENCE</span>
               <span className="text-[10px] text-emerald-400 border border-emerald-800/80 px-1.5 py-0.5 rounded bg-emerald-950/60 font-bold">
-                100% LIVE REAL-TIME DATA
+                FEED LIVE & RILIS TERBARU
               </span>
             </h1>
             <div className="text-[11px] text-gray-400">
@@ -154,7 +188,7 @@ export default function StatisticsDashboard() {
           <button
             onClick={loadStats}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 hover:border-cyan-400 transition"
+            className="flex min-h-10 items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-800/60 hover:border-cyan-400 transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             REFRESH METRIK
@@ -165,15 +199,17 @@ export default function StatisticsDashboard() {
       {/* ── Main Statistical Content ── */}
       <div className="p-3 sm:p-5 lg:p-6 space-y-6 flex-1">
         {/* ── SECTION 1: KEY PERFORMANCE INDICATORS (KPI CARDS) ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {/* KPI 1 */}
-          <div className="p-4 rounded-xl bg-[#06122b]/80 border border-cyan-900/50 shadow-lg relative overflow-hidden">
+          <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0a1934] to-[#06122b]/80 border border-cyan-900/50 shadow-lg relative overflow-hidden transition hover:border-cyan-700/70">
             <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
               <span className="font-bold tracking-wider">TOTAL INSIDEN AKTIF</span>
               <Activity className="w-4 h-4 text-cyan-400" />
             </div>
             <div className="text-3xl font-bold text-white mb-1">
-              {disasters.length + quakes.length}
+              {loading && disasters.length === 0 && quakes.length === 0
+                ? <ValueSkeleton className="h-8 w-14" />
+                : disasters.length + quakes.length}
             </div>
             <div className="text-[11px] text-cyan-400 flex items-center justify-between">
               <span>NASA EONET: {disasters.length}</span>
@@ -182,13 +218,15 @@ export default function StatisticsDashboard() {
           </div>
 
           {/* KPI 2 */}
-          <div className="p-4 rounded-xl bg-[#06122b]/80 border border-amber-900/50 shadow-lg relative overflow-hidden">
+          <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#251a20] to-[#06122b]/80 border border-amber-900/50 shadow-lg relative overflow-hidden transition hover:border-amber-700/70">
             <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
               <span className="font-bold tracking-wider">AKTIVITAS SEISMIK M5+</span>
               <ShieldAlert className="w-4 h-4 text-amber-400" />
             </div>
             <div className="text-3xl font-bold text-amber-400 mb-1">
-              {quakes.length} <span className="text-xs text-gray-400 font-normal">Gempa (7 Hari)</span>
+              {loading && quakes.length === 0
+                ? <ValueSkeleton className="h-8 w-14" />
+                : <>{quakes.length} <span className="text-xs text-gray-400 font-normal">Gempa (7 Hari)</span></>}
             </div>
             <div className="text-[11px] text-gray-400 flex items-center justify-between">
               <span>Max: M{highestQuake}</span>
@@ -197,31 +235,31 @@ export default function StatisticsDashboard() {
           </div>
 
           {/* KPI 3 */}
-          <div className="p-4 rounded-xl bg-[#06122b]/80 border border-emerald-900/50 shadow-lg relative overflow-hidden">
+          <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#0b2427] to-[#06122b]/80 border border-emerald-900/50 shadow-lg relative overflow-hidden transition hover:border-emerald-700/70">
             <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
-              <span className="font-bold tracking-wider">KURS SPOT USD / IDR</span>
+              <span className="font-bold tracking-wider">KURS LIVE USD / IDR</span>
               <DollarSign className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-3xl font-bold text-emerald-400 mb-1">
-              {rates['IDR'] ? `Rp ${Math.round(rates['IDR']).toLocaleString('id-ID')}` : 'Memuat...'}
+              {rates['IDR'] ? `Rp ${Math.round(rates['IDR']).toLocaleString('id-ID')}` : loading ? <ValueSkeleton className="h-8 w-32" /> : '—'}
             </div>
             <div className="text-[11px] text-gray-400 flex items-center justify-between">
-              <span className="text-emerald-400 font-bold">ExchangeRate API Live</span>
+              <span className="text-emerald-400 font-bold">Yahoo Finance · intraday</span>
               <span>USD Base</span>
             </div>
           </div>
 
           {/* KPI 4 */}
-          <div className="p-4 rounded-xl bg-[#06122b]/80 border border-indigo-900/50 shadow-lg relative overflow-hidden">
+          <div className="min-w-0 p-5 rounded-2xl bg-gradient-to-br from-[#171b36] to-[#06122b]/80 border border-indigo-900/50 shadow-lg relative overflow-hidden transition hover:border-indigo-700/70">
             <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
               <span className="font-bold tracking-wider">KURS EURO (USD / EUR)</span>
               <DollarSign className="w-4 h-4 text-indigo-400" />
             </div>
             <div className="text-3xl font-bold text-indigo-300 mb-1">
-              {rates['EUR'] ? `€ ${rates['EUR'].toFixed(4)}` : 'Memuat...'}
+              {rates['EUR'] ? `€ ${rates['EUR'].toFixed(4)}` : loading ? <ValueSkeleton className="h-8 w-24" /> : '—'}
             </div>
             <div className="text-[11px] text-gray-400 flex items-center justify-between">
-              <span>Status: Terverifikasi</span>
+              <span>Kutipan pasar intraday</span>
               <span className="text-indigo-400">Pasar Valas Global</span>
             </div>
           </div>
@@ -229,17 +267,17 @@ export default function StatisticsDashboard() {
 
         {/* ── SECTION 2: EKONOMI & NILAI TUKAR GLOBAL ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* GDP Real-Time World Bank */}
+          {/* Latest annual GDP data from World Bank */}
           <div className="lg:col-span-2 p-5 rounded-2xl bg-[#06122b]/60 border border-cyan-900/40 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-cyan-900/30 pb-3">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-cyan-400" />
                 <span className="font-bold text-sm tracking-wider text-white uppercase">
-                  PDB EKONOMI GLOBAL (USD TRILIUN) — WORLD BANK LIVE
+                  PDB EKONOMI GLOBAL (USD TRILIUN) — DATA TERBARU WORLD BANK
                 </span>
               </div>
               <span className="text-[11px] text-emerald-400 font-bold border border-emerald-900/60 px-2 py-0.5 rounded bg-emerald-950/40">
-                LIVE API
+                TAHUNAN · UPDATE API
               </span>
             </div>
 
@@ -268,9 +306,15 @@ export default function StatisticsDashboard() {
                     </div>
                   </div>
                 ))
+              ) : loading ? (
+                <ListSkeleton rows={5} />
               ) : (
-                <div className="text-xs text-gray-500 py-4 text-center">Menghubungkan ke API World Bank...</div>
+                <div className="text-xs text-gray-500 py-4 text-center">Data PDB belum tersedia.</div>
               )}
+            </div>
+            <div className="border-t border-cyan-900/30 pt-3 text-[10px] text-gray-500">
+              PDB adalah data tahunan, bukan real-time. Ditampilkan berdasarkan tahun terakhir yang tersedia dari World Bank per negara.
+              {lastSync && <span> Sinkronisasi API: {lastSync}.</span>}
             </div>
           </div>
 
@@ -283,7 +327,7 @@ export default function StatisticsDashboard() {
                   KURS MATA UANG (USD BASE)
                 </span>
               </div>
-              <span className="text-[10px] text-emerald-400 font-bold">REAL-TIME</span>
+              <span className="text-[10px] text-emerald-400 font-bold">UPDATE 1 MENIT</span>
             </div>
 
             <div className="space-y-2.5">
@@ -305,6 +349,8 @@ export default function StatisticsDashboard() {
                         c.code === 'IDR' || c.code === 'JPY'
                           ? Math.round(val).toLocaleString('id-ID')
                           : val.toFixed(4)
+                      ) : loading ? (
+                        <ValueSkeleton className="h-3 w-16" />
                       ) : (
                         '--'
                       )}
@@ -324,11 +370,11 @@ export default function StatisticsDashboard() {
               <div className="flex items-center gap-2">
                 <Flame className="w-4 h-4 text-amber-400" />
                 <span className="font-bold text-sm tracking-wider text-white uppercase">
-                  HARGA KOMODITAS REAL-TIME (ALPHA VANTAGE)
+                  FUTURES KOMODITAS · LIVE INTRADAY
                 </span>
               </div>
               <span className="text-[10px] text-emerald-400 font-bold border border-emerald-900/60 px-2 py-0.5 rounded bg-emerald-950/40">
-                LIVE FEED
+                UPDATE 1 MENIT
               </span>
             </div>
 
@@ -346,7 +392,9 @@ export default function StatisticsDashboard() {
                         </span>
                         <span>{com.name}</span>
                       </div>
-                      <div className="text-gray-500 text-[10px]">{com.unit} · {com.date}</div>
+                      <div className="text-gray-500 text-[10px]">
+                        {com.unit} · {new Date(com.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="font-bold text-white text-sm">{com.price}</div>
@@ -356,8 +404,10 @@ export default function StatisticsDashboard() {
                     </div>
                   </div>
                 ))
+              ) : loading ? (
+                <ListSkeleton rows={3} />
               ) : (
-                <div className="text-xs text-gray-500 py-4 text-center">Mengambil harga komoditas terkini dari Alpha Vantage...</div>
+                <div className="text-xs text-gray-500 py-4 text-center">Data komoditas belum tersedia.</div>
               )}
             </div>
           </div>
@@ -375,7 +425,7 @@ export default function StatisticsDashboard() {
             </div>
 
             <div className="space-y-3">
-              {categoryList.slice(0, 6).map(([cat, count]) => {
+              {loading && categoryList.length === 0 ? <ListSkeleton rows={4} /> : categoryList.slice(0, 6).map(([cat, count]) => {
                 const pct = Math.round((count / totalDisasters) * 100);
                 return (
                   <div key={cat} className="space-y-1">
@@ -409,6 +459,7 @@ export default function StatisticsDashboard() {
           </div>
 
           <div className="overflow-x-auto">
+            {loading && quakes.length === 0 ? <TableSkeleton rows={6} columns={5} /> : (
             <table className="w-full text-xs text-left">
               <thead>
                 <tr className="border-b border-cyan-900/40 text-gray-400 uppercase text-[10px] tracking-wider">
@@ -449,6 +500,7 @@ export default function StatisticsDashboard() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ import {
   Copy,
   Check,
   Search,
+  MessageCircle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -102,8 +103,11 @@ const ANIM_CSS = `
 @media (prefers-reduced-motion: no-preference) {
   @keyframes wm-fade { from { opacity: 0 } to { opacity: 1 } }
   @keyframes wm-rise { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: none } }
+  @keyframes wm-contact-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
   .wm-fade { animation: wm-fade .18s ease-out }
   .wm-rise { animation: wm-rise .22s cubic-bezier(.2,.8,.2,1) }
+  .wm-contact-in { animation: wm-contact-in .35s ease-out both }
+  .wm-contact-delay { animation-delay: .08s }
 }`;
 
 const tabFromHash = (): ModalTab | null =>
@@ -516,10 +520,48 @@ export default function Footer() {
     <>
       <style>{ANIM_CSS}</style>
 
-      <footer className="w-full bg-[#050a18] border-t border-cyan-900/40 text-gray-400 font-mono text-xs py-6 px-4 sm:px-8 mt-auto z-20">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <footer className="relative z-20 mt-auto w-full border-t border-cyan-900/50 bg-gradient-to-b from-[#081226] to-[#030712] px-4 py-8 text-gray-400 sm:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-6">
+          <section
+            aria-labelledby="wm-contact-title"
+            className="grid w-full gap-5 rounded-2xl border border-cyan-900/50 bg-[#06101f]/80 p-4 shadow-[0_12px_40px_rgba(0,0,0,0.2)] sm:p-5 lg:grid-cols-[minmax(190px,0.7fr)_2fr] lg:items-center"
+          >
+            <div>
+              <h2 id="wm-contact-title" className="text-xs font-bold tracking-[0.18em] text-cyan-300 uppercase">Kontak Person</h2>
+              <p className="mt-1.5 max-w-xs text-xs leading-relaxed text-gray-400">
+                Butuh bantuan atau ingin memberi masukan? Hubungi tim World Monitor.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {[
+                { name: 'Mohammad Varrel Khairul Ilham', role: 'Agent', phone: '+62 858-8235-9569', href: 'https://wa.me/6285882359569' },
+                { name: 'Muhammad Rizki Sumantri', role: 'Developer', phone: '+62 895-4041-47521', href: 'https://wa.me/62895404147521' },
+              ].map((contact, index) => (
+                <a
+                  key={contact.name}
+                  href={contact.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Hubungi ${contact.name} melalui WhatsApp`}
+                  className={`wm-contact-in ${index ? 'wm-contact-delay' : ''} group flex min-w-0 items-center gap-3 rounded-xl border border-cyan-900/50 bg-[#081226] p-3 transition-colors hover:border-cyan-500/60 hover:bg-cyan-950/30`}
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-emerald-800/60 bg-emerald-950/50 text-emerald-300 group-hover:text-white">
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-bold text-gray-100">{contact.name}</span>
+                    <span className="mt-0.5 block truncate text-[10px] text-gray-400">{contact.role} · WhatsApp</span>
+                    <span className="mt-0.5 block text-[10px] tabular-nums text-gray-500">{contact.phone}</span>
+                  </span>
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0 text-cyan-500/70 group-hover:text-cyan-300" aria-hidden="true" />
+                </a>
+              ))}
+            </div>
+          </section>
+
+          <div className="flex w-full flex-col items-center justify-between gap-5 border-t border-cyan-900/30 pt-5 md:flex-row">
           {/* Logo & Copyright */}
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <img
               src="/logo.png"
               alt="World Monitor"
@@ -532,7 +574,7 @@ export default function Footer() {
                   v{VERSION}
                 </span>
               </div>
-              <div className="text-[11px] text-gray-500">
+              <div className="text-[11px] leading-relaxed text-gray-500">
                 © {new Date().getFullYear()} World Monitor Platform · Lisensi Terbuka MIT (11 Bahasa)
               </div>
             </div>
@@ -541,7 +583,7 @@ export default function Footer() {
           {/* Navigasi Footer */}
           <nav
             aria-label="Footer"
-            className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs"
+            className="flex flex-wrap items-center justify-center gap-2 text-xs sm:gap-3"
           >
             <button
               type="button"
@@ -585,13 +627,14 @@ export default function Footer() {
           {/* Sistem Status */}
           <div
             role="status"
-            className="flex items-center gap-2 text-[11px] text-gray-500 font-mono"
+            className="flex items-center gap-2 rounded-full border border-emerald-900/50 bg-emerald-950/30 px-3 py-2 text-[10px] font-mono text-emerald-300"
           >
             <span
               aria-hidden="true"
-              className="w-2 h-2 rounded-full bg-emerald-400 motion-safe:animate-pulse shadow-[0_0_6px_#10b981]"
+              className="h-2 w-2 rounded-full bg-emerald-400 motion-safe:animate-pulse shadow-[0_0_6px_#10b981]"
             />
-            <span>CLOUDFLARE EDGE ONLINE</span>
+            <span>SISTEM ONLINE</span>
+          </div>
           </div>
         </div>
       </footer>

@@ -1,8 +1,7 @@
 // src/lib/api.ts
-// Semua API call terpusat di sini — 100% LIVE DATA TANPA DATA FIKTIF
+// Semua API call terpusat di sini; kesegaran data mengikuti kemampuan sumbernya.
 
 const MAPTILER_KEY      = (import.meta.env.VITE_MAPTILER_KEY as string) || '';
-const EXCHANGE_KEY      = (import.meta.env.VITE_EXCHANGERATE_KEY as string) || '';
 const ALPHAVANTAGE_KEY  = (import.meta.env.VITE_ALPHAVANTAGE_KEY as string) || '';
 
 export const MAP_STYLE = `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`;
@@ -24,6 +23,50 @@ export async function fetchEarthquakes() {
     lng: f.geometry.coordinates[0],
     type: 'Gempa',
   }));
+}
+
+export async function fetchIndonesiaEarthquakes(minMagnitude = 4.5) {
+  const response = await fetch('https://data.bmkg.go.id/DataMKG/TEWS/gempaterkini.json', {
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`BMKG earthquake feed HTTP ${response.status}`);
+
+  const data = await response.json() as {
+    Infogempa?: {
+      gempa?: Array<{
+        DateTime: string;
+        Coordinates: string;
+        Magnitude: string;
+        Kedalaman: string;
+        Wilayah: string;
+        Potensi: string;
+      }>;
+    };
+  };
+  if (!Array.isArray(data.Infogempa?.gempa)) throw new Error('Format feed gempa BMKG tidak valid.');
+  return data.Infogempa.gempa.flatMap((earthquake, index) => {
+    const [lat, lng] = earthquake.Coordinates.split(',').map(Number);
+    const magnitude = Number(earthquake.Magnitude);
+    const time = new Date(earthquake.DateTime);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(magnitude) || Number.isNaN(time.getTime())) {
+      console.warn('Mengabaikan data gempa BMKG dengan format tidak valid:', earthquake);
+      return [];
+    }
+    if (magnitude < minMagnitude) return [];
+    return [{
+      id: `bmkg-${time.toISOString()}-${lat}-${lng}-${index}`,
+      title: `Gempa M${magnitude.toFixed(1)} ${earthquake.Wilayah}`,
+      magnitude,
+      place: earthquake.Wilayah,
+      time: time.toISOString(),
+      lat,
+      lng,
+      depth: earthquake.Kedalaman,
+      tsunamiPotential: earthquake.Potensi,
+      source: 'BMKG',
+      type: 'Gempa',
+    }];
+  });
 }
 
 // ─── Bencana Global (NASA EONET — LIVE) ──────────────────────────────────────
@@ -53,6 +96,7 @@ export async function fetchWeather(lat: number, lng: number) {
 
 // ─── Kualitas Udara Real-Time (Open-Meteo Air Quality — LIVE) ────────────────
 export interface AirQualityCurrent {
+  time?: string;
   pm10?: number;
   pm2_5?: number;
   ozone?: number;
@@ -77,24 +121,54 @@ export async function fetchAirQualityLive(
   return locationsData.map(location => location.current ?? null);
 }
 
-// ─── Nilai Tukar Valas Real-Time (ExchangeRate API — Cloudflare Edge Proxy) ───
-export async function fetchExchangeRates(base = 'USD') {
-  try {
-    const res = await fetch(`/api/forex?base=${base}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (!data.error) return data;
-    }
-  } catch {
-    // Fallback jika mode dev lokal dengan direct key
+// ─── Nilai tukar intraday 1 menit melalui Cloudflare Worker ─────────────────
+export interface LiveExchangeRates {
+  result: string;
+  base_code: string;
+  conversion_rates: Record<string, number>;
+  quote_timestamps: Record<string, number>;
+  provider: string;
+}
+
+export async function fetchExchangeRates(base = 'USD'): Promise<LiveExchangeRates> {
+  const response = await fetch(`/api/forex?base=${encodeURIComponent(base)}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `Kutipan mata uang HTTP ${response.status}`);
   }
-  if (EXCHANGE_KEY) {
-    const res = await fetch(
-      `https://v6.exchangerate-api.com/v6/${EXCHANGE_KEY}/latest/${base}`
-    );
-    return res.json();
+
+  const data = await response.json() as LiveExchangeRates;
+  if (data.result !== 'success' || Object.keys(data.conversion_rates || {}).length === 0) {
+    throw new Error('Sumber kutipan intraday tidak mengembalikan data terbaru.');
   }
-  return { result: 'error', conversion_rates: {} };
+  return data;
+}
+
+export interface IntradayExchangeRatePoint {
+  timestamp: number;
+  rate: number;
+}
+
+export async function fetchIntradayExchangeRate(
+  currency: string,
+): Promise<IntradayExchangeRatePoint[]> {
+  const response = await fetch(
+    `/api/forex/intraday?currency=${encodeURIComponent(currency)}`,
+    { cache: 'no-store' },
+  );
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `Kurs intraday HTTP ${response.status}`);
+  }
+
+  const data = await response.json() as {
+    rates?: IntradayExchangeRatePoint[];
+  };
+  return (data.rates ?? [])
+    .filter(point => Number.isFinite(point.timestamp) && Number.isFinite(point.rate) && point.rate > 0)
+    .sort((a, b) => a.timestamp - b.timestamp);
 }
 
 // ─── Saham & Kuotasi Forex (Alpha Vantage — LIVE) ────────────────────────────
@@ -106,66 +180,25 @@ export async function fetchStockPrice(ticker: string) {
   return res.json();
 }
 
-// ─── Komoditas Pasar Real-Time (Alpha Vantage — Cloudflare Edge Proxy) ───────
+// ─── Kutipan komoditas intraday melalui Cloudflare Worker ───────────────────
 export async function fetchLiveCommodities() {
-  try {
-    const res = await fetch('/api/commodities');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) return data;
-    }
-  } catch {
-    // Fallback jika mode dev lokal dengan direct key
+  const response = await fetch('/api/commodities', { cache: 'no-store' });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(data?.error || `Kutipan komoditas HTTP ${response.status}`);
   }
-
-  if (!ALPHAVANTAGE_KEY) return [];
-
-  try {
-    const [wtiRes, gasRes, copperRes] = await Promise.allSettled([
-      fetch(`https://www.alphavantage.co/query?function=WTI&interval=monthly&apikey=${ALPHAVANTAGE_KEY}`).then(r => r.json()),
-      fetch(`https://www.alphavantage.co/query?function=NATURAL_GAS&interval=monthly&apikey=${ALPHAVANTAGE_KEY}`).then(r => r.json()),
-      fetch(`https://www.alphavantage.co/query?function=COPPER&interval=monthly&apikey=${ALPHAVANTAGE_KEY}`).then(r => r.json()),
-    ]);
-
-    const results = [];
-    if (wtiRes.status === 'fulfilled' && wtiRes.value?.data?.[0]) {
-      const val = parseFloat(wtiRes.value.data[0].value);
-      results.push({
-        name: 'Minyak Mentah WTI',
-        symbol: 'WTI',
-        price: `$${val.toFixed(2)}`,
-        unit: '/barrel',
-        date: wtiRes.value.data[0].date,
-        source: 'Alpha Vantage WTI',
-      });
-    }
-    if (gasRes.status === 'fulfilled' && gasRes.value?.data?.[0]) {
-      const val = parseFloat(gasRes.value.data[0].value);
-      results.push({
-        name: 'Gas Alam Henry Hub',
-        symbol: 'NATGAS',
-        price: `$${val.toFixed(2)}`,
-        unit: '/MMBtu',
-        date: gasRes.value.data[0].date,
-        source: 'Alpha Vantage Henry Hub',
-      });
-    }
-    if (copperRes.status === 'fulfilled' && copperRes.value?.data?.[0]) {
-      const val = parseFloat(copperRes.value.data[0].value);
-      results.push({
-        name: 'Tembaga Global (Copper)',
-        symbol: 'COPPER',
-        price: `$${val.toFixed(2)}`,
-        unit: '/metric ton',
-        date: copperRes.value.data[0].date,
-        source: 'Alpha Vantage Copper',
-      });
-    }
-    return results;
-  } catch (err) {
-    console.error('Error fetching commodities:', err);
-    return [];
+  const data = await response.json() as Array<{
+    name: string;
+    symbol: string;
+    price: string;
+    unit: string;
+    date: string;
+    source: string;
+  }>;
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error('Sumber komoditas tidak mengembalikan kutipan terbaru.');
   }
+  return data;
 }
 
 // ─── AI Intelligence Multi-Provider (Cloudflare Worker Proxy) ────────────────
@@ -383,7 +416,7 @@ export async function fetchAvailableAIProviders(): Promise<{ id: string; name: s
   }
 }
 
-// ─── GDP Real-Time (World Bank — LIVE) ───────────────────────────────────────
+// ─── GDP terbaru yang tersedia (World Bank; data tahunan) ────────────────────
 export interface LiveGDPRecord {
   code: string;
   iso3: string;
@@ -407,8 +440,10 @@ export async function fetchGlobalGDP(): Promise<LiveGDPRecord[]> {
 
   try {
     const res = await fetch(
-      `https://api.worldbank.org/v2/country/${codes}/indicator/NY.GDP.MKTP.CD?format=json&mrv=1`
+      `https://api.worldbank.org/v2/country/${codes}/indicator/NY.GDP.MKTP.CD?format=json&mrv=1`,
+      { cache: 'no-store' }
     );
+    if (!res.ok) throw new Error(`World Bank GDP API failed (HTTP ${res.status})`);
     const json = await res.json();
     if (!json?.[1]) return [];
 
@@ -430,7 +465,7 @@ export async function fetchGlobalGDP(): Promise<LiveGDPRecord[]> {
   }
 }
 
-// ─── Inflasi Real-Time (World Bank — LIVE) ──────────────────────────────────
+// ─── Inflasi tahunan terbaru yang diterbitkan World Bank ────────────────────
 export interface LiveInflationRecord {
   code: string;
   name: string;
@@ -575,6 +610,21 @@ export async function fetchLiveFlights(): Promise<LiveFlight[]> {
     throw new Error(data?.error || `OpenSky API HTTP ${res.status}`);
   }
   return res.json();
+}
+
+export interface LiveShip {
+  mmsi: string;
+  name: string;
+  lng: number;
+  lat: number;
+  speed: number | null;
+  heading: number | null;
+  receivedAt: number;
+}
+
+export function createLiveShipsSocket(): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return new WebSocket(`${protocol}//${window.location.host}/api/transport/ships`);
 }
 
 // ─── Energi Global (U.S. EIA Data) ───────────────────────────────────────────

@@ -109,7 +109,7 @@ export default function Landing() {
             { name: 'USGS', type: 'Gempa', color: 'border-orange-800 text-orange-400' },
             { name: 'World Bank', type: 'Ekonomi', color: 'border-green-800 text-green-400' },
             { name: 'MapTiler', type: 'Peta', color: 'border-blue-800 text-blue-400' },
-            { name: 'ExchangeRate API', type: 'Forex', color: 'border-yellow-800 text-yellow-400' },
+            { name: 'Yahoo Finance', type: 'Forex & Futures', color: 'border-yellow-800 text-yellow-400' },
             { name: 'Alpha Vantage', type: 'Saham', color: 'border-purple-800 text-purple-400' },
             { name: 'Open-Meteo', type: 'Cuaca', color: 'border-cyan-800 text-cyan-400' },
             { name: 'OpenAQ', type: 'Kualitas Udara', color: 'border-emerald-800 text-emerald-400' },
